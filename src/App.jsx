@@ -47,6 +47,9 @@ export default function AdminApp() {
     name: "", about: "", website: "", phone: "", email: "", address: "",
   });
   const [editingRateId, setEditingRateId] = useState(null);
+  const [notifs, setNotifs] = useState([]);
+  const [notifUnread, setNotifUnread] = useState(0);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [newUser, setNewUser] = useState({
     username: "", password: "", full_name: "", role: "agent", team_id: "", whatsapp_phone: "",
   });
@@ -242,6 +245,33 @@ export default function AdminApp() {
     if (page === "company") loadCompany();
     if (page === "users") { loadUsers(); loadTeams(); }
   }, [page, auth?.token]);
+
+  // ─── Notifications ──────────────────────────────────────────────
+  const loadNotifs = async () => {
+    try {
+      const { data } = await axios.get(`${API}/api/notifications`, { headers: getHeaders() });
+      setNotifs(data.notifications || []);
+      setNotifUnread(data.unread || 0);
+    } catch (e) {
+      // non-critical
+    }
+  };
+
+  const markNotifsRead = async () => {
+    try {
+      await axios.post(`${API}/api/notifications/read`, {}, { headers: getHeaders() });
+      setNotifUnread(0);
+      setNotifs((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    } catch (e) {}
+  };
+
+  // Poll notifications every 30s while logged in
+  useEffect(() => {
+    if (!auth?.token) return;
+    loadNotifs();
+    const iv = setInterval(loadNotifs, 30000);
+    return () => clearInterval(iv);
+  }, [auth?.token]);
 
   const selectClient = async (client) => {
     setSelectedClient(client);
@@ -686,6 +716,80 @@ export default function AdminApp() {
       </div>
 
       <div style={{ flex: 1, padding: 20, overflow: "auto" }}>
+        {/* Top bar with notification bell */}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8, position: "relative" }}>
+          <button
+            onClick={() => {
+              const opening = !notifOpen;
+              setNotifOpen(opening);
+              if (opening && notifUnread > 0) markNotifsRead();
+            }}
+            style={{
+              position: "relative", background: "white", border: "1px solid #e5e7eb",
+              borderRadius: 8, width: 40, height: 40, cursor: "pointer", fontSize: 18,
+            }}
+            title="Notifications"
+          >
+            🔔
+            {notifUnread > 0 && (
+              <span style={{
+                position: "absolute", top: -6, right: -6, background: "#dc2626", color: "white",
+                borderRadius: "50%", minWidth: 18, height: 18, fontSize: 11, fontWeight: 700,
+                display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px",
+              }}>
+                {notifUnread > 99 ? "99+" : notifUnread}
+              </span>
+            )}
+          </button>
+
+          {notifOpen && (
+            <div style={{
+              position: "absolute", top: 46, right: 0, width: 340, maxHeight: 420, overflowY: "auto",
+              background: "white", border: "1px solid #e5e7eb", borderRadius: 10,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 50,
+            }}>
+              <div style={{ padding: "12px 14px", borderBottom: "1px solid #eee", fontWeight: 600, fontSize: 13 }}>
+                Notifications
+              </div>
+              {notifs.length === 0 ? (
+                <div style={{ padding: 20, color: "#9ca3af", fontSize: 13, textAlign: "center" }}>
+                  No notifications
+                </div>
+              ) : (
+                notifs.map((n) => {
+                  const color = n.type === "SLA_MANAGER_ESCALATION" ? "#dc2626"
+                    : n.type === "SLA_AGENT_REMINDER" ? "#d97706" : "#1a6b3c";
+                  return (
+                    <div
+                      key={n.id}
+                      onClick={() => {
+                        if (n.client_phone) {
+                          setPage("chats");
+                          setNotifOpen(false);
+                        }
+                      }}
+                      style={{
+                        padding: "10px 14px", borderBottom: "1px solid #f3f4f6",
+                        cursor: n.client_phone ? "pointer" : "default",
+                        background: n.is_read ? "white" : "#f0fdf4",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block" }} />
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>{n.title}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#4b5563" }}>{n.body}</div>
+                      <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 3 }}>
+                        {new Date(n.created_at).toLocaleString()}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+
         <h1 style={{ marginBottom: 20 }}>
           {page === "dashboard"
             ? "Dashboard"
@@ -697,7 +801,11 @@ export default function AdminApp() {
                   ? "Users"
                   : page === "teams"
                     ? "Teams"
-                    : "Plot Rates"}
+                    : page === "projects"
+                      ? "Projects"
+                      : page === "company"
+                        ? "Company Info"
+                        : "Plot Rates"}
         </h1>
 
         {page === "dashboard" && (

@@ -387,6 +387,38 @@ app.post("/api/leads/:phone/seen", auth.requireAuth(["admin", "manager", "agent"
   }
 });
 
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────
+// Fetch the logged-in user's notifications (newest first).
+app.get("/api/notifications", auth.requireAuth(["admin", "manager", "agent"]), async (req, res) => {
+  try {
+    const { data, error } = await db.supabase
+      .from("notifications")
+      .select("*")
+      .eq("recipient_id", req.user.id)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) throw new Error(error.message);
+    const unread = (data || []).filter((n) => !n.is_read).length;
+    res.json({ notifications: data || [], unread });
+  } catch (err) {
+    console.error("notifications fetch error:", err.message);
+    res.status(500).json({ notifications: [], unread: 0 });
+  }
+});
+
+// Mark one (or all) notifications read.
+app.post("/api/notifications/read", auth.requireAuth(["admin", "manager", "agent"]), async (req, res) => {
+  try {
+    let q = db.supabase.from("notifications").update({ is_read: true }).eq("recipient_id", req.user.id);
+    if (req.body.id) q = q.eq("id", req.body.id);  // specific one; else all
+    const { error } = await q;
+    if (error) throw new Error(error.message);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ─── AUTH & ADMIN ─────────────────────────────────────────────────────
 
 app.post("/api/login", async (req, res) => {
