@@ -1993,7 +1993,7 @@ export default function AdminApp() {
                         >
                           <option value="">— Select —</option>
                           {opts.map((o) => (
-                            <option key={o} value={o}>{o}</option>
+                            <option key={o} value={o}>30Ft{o}</option>
                           ))}
                         </select>
                       </div>
