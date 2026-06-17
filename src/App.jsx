@@ -1958,7 +1958,7 @@ export default function AdminApp() {
                 <div style={{ marginTop: 14, padding: 14, background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb" }}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Plot Features</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                    {featureDefs.filter((d) => d.input_type === "checkbox").map((d) => (
+                    {featureDefs.filter((d) => d.input_type === "checkbox" && d.label && d.label.trim()).map((d) => (
                       <label key={d.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
                         <input
                           type="checkbox"
@@ -1976,9 +1976,26 @@ export default function AdminApp() {
                   {/* Select-type features (e.g. Road Width) */}
                   {featureDefs.filter((d) => d.input_type === "select").map((d) => {
                     let opts = [];
+                    const raw = d.options;
                     try {
-                      opts = d.options ? (d.options.trim().startsWith("[") ? JSON.parse(d.options) : d.options.split(",").map((s) => s.trim())) : [];
-                    } catch { opts = (d.options || "").split(",").map((s) => s.trim()); }
+                      if (!raw) {
+                        opts = [];
+                      } else if (typeof raw === "object") {
+                        opts = Array.isArray(raw) ? raw : Object.keys(raw);
+                      } else {
+                        const s = String(raw).trim();
+                        if (s.startsWith("[") || s.startsWith("{")) {
+                          const parsed = JSON.parse(s);
+                          opts = Array.isArray(parsed) ? parsed : Object.keys(parsed);
+                        } else {
+                          opts = s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+                        }
+                      }
+                    } catch {
+                      opts = String(raw || "").split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+                    }
+                    // Normalize: each option may be a string or {label,value}
+                    opts = opts.map((o) => (typeof o === "object" ? (o.label || o.value || JSON.stringify(o)) : o));
                     return (
                       <div key={d.key} style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
                         <label style={{ fontSize: 13, minWidth: 90 }}>{d.label}:</label>
@@ -1993,9 +2010,14 @@ export default function AdminApp() {
                         >
                           <option value="">— Select —</option>
                           {opts.map((o) => (
-                            <option key={o} value={o}>30Ft{o}</option>
+                            <option key={o} value={o}>{o}</option>
                           ))}
                         </select>
+                        {opts.length === 0 && (
+                          <span style={{ fontSize: 11, color: "#d97706" }}>
+                            No options set — add them in Settings
+                          </span>
+                        )}
                       </div>
                     );
                   })}
