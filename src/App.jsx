@@ -36,7 +36,10 @@ export default function AdminApp() {
     min: "",
     max: "",
     notes: "",
+    features: {},
   });
+  const [featureDefs, setFeatureDefs] = useState([]);
+  const [pricePreview, setPricePreview] = useState(null);
   const [newLeadForm, setNewLeadForm] = useState({ name: "", phone: "" });
   const [excelData, setExcelData] = useState([]);
 
@@ -244,7 +247,56 @@ export default function AdminApp() {
     if (page === "projects") loadProjects();
     if (page === "company") loadCompany();
     if (page === "users") { loadUsers(); loadTeams(); }
+    if (page === "rates") loadFeatures();
   }, [page, auth?.token]);
+
+  const loadFeatures = async () => {
+    try {
+      const { data } = await axios.get(`${API}/api/features`, { headers: getHeaders() });
+      setFeatureDefs(data || []);
+    } catch (e) {
+      console.error("loadFeatures error:", e.message);
+    }
+  };
+
+  // Live price preview: base × (1 + sum of checked feature %)
+  const computePreview = (form, defs) => {
+    const min = parseFloat(form.min);
+    const max = parseFloat(form.max);
+    if (!min || !max || !defs.length) { setPricePreview(null); return; }
+    let totalPct = 0;
+    let extraLand = false;
+    for (const d of defs) {
+      if (!form.features?.[d.key]) continue;
+      if (d.key === "extra_land") { extraLand = true; continue; }
+      totalPct += Number(d.premium_percent) || 0;
+    }
+    const factor = 1 + totalPct / 100;
+    setPricePreview({
+      min: (min * factor).toFixed(1),
+      max: (max * factor).toFixed(1),
+      totalPct,
+      extraLand,
+    });
+  };
+
+  const toggleFeature = (key) => {
+    const next = { ...rateForm, features: { ...rateForm.features, [key]: !rateForm.features?.[key] } };
+    setRateForm(next);
+    computePreview(next, featureDefs);
+  };
+
+  const updatePremium = async (featureKey, percent) => {
+    try {
+      await axios.post(`${API}/api/features/premium`,
+        { feature_key: featureKey, premium_percent: parseFloat(percent) || 0 },
+        { headers: getHeaders() });
+      loadFeatures();
+      setMsg("Premium updated");
+    } catch (e) {
+      setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
 
   // ─── Notifications ──────────────────────────────────────────────
   const loadNotifs = async () => {
@@ -367,7 +419,7 @@ export default function AdminApp() {
           plot_no_to: parseInt(rateForm.to),
           min_price: Math.round(parseFloat(rateForm.min) * 100000),
           max_price: Math.round(parseFloat(rateForm.max) * 100000),
-          features: {},
+          features: rateForm.features || {},
           notes: rateForm.notes,
         },
         { headers: getHeaders() },
@@ -383,7 +435,9 @@ export default function AdminApp() {
         min: "",
         max: "",
         notes: "",
+        features: {},
       });
+      setPricePreview(null);
       loadRates();
     } catch (e) {
       setMsg("Error: " + e.response?.data?.error || e.message);
@@ -392,7 +446,7 @@ export default function AdminApp() {
 
   const editRate = (r) => {
     setEditingRateId(r.id);
-    setRateForm({
+    const form = {
       sector: r.sector || "",
       type: r.plot_type || "residential",
       size: r.size || "",
@@ -401,14 +455,18 @@ export default function AdminApp() {
       min: r.min_price ? r.min_price / 100000 : "",
       max: r.max_price ? r.max_price / 100000 : "",
       notes: r.notes || "",
-    });
+      features: r.features || {},
+    };
+    setRateForm(form);
+    computePreview(form, featureDefs);
     setMsg("Editing rate — update the form and Save");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const cancelEditRate = () => {
     setEditingRateId(null);
-    setRateForm({ sector: "", type: "residential", size: "", from: "", to: "", min: "", max: "", notes: "" });
+    setRateForm({ sector: "", type: "residential", size: "", from: "", to: "", min: "", max: "", notes: "", features: {} });
+    setPricePreview(null);
     setMsg("");
   };
 
@@ -1680,6 +1738,35 @@ export default function AdminApp() {
 
         {page === "rates" && (
           <div>
+            {/* Feature Premiums editor (admin/manager) */}
+            {featureDefs.length > 0 && (auth?.user?.role === "admin" || auth?.user?.role === "manager") && (
+              <div style={{ background: "white", padding: 20, borderRadius: 8, marginBottom: 20, border: "1px solid #e5e7eb" }}>
+                <h3 style={{ marginTop: 0 }}>Feature Premiums (%)</h3>
+                <p style={{ fontSize: 12, color: "#6b7280", marginTop: 0 }}>
+                  These percentages are added to a plot's base price when that feature is checked. Extra Land has no % (priced separately).
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+                  {featureDefs.filter((d) => d.key !== "extra_land").map((d) => (
+                    <div key={d.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <label style={{ fontSize: 13, minWidth: 90 }}>{d.label}</label>
+                      <input
+                        type="number"
+                        defaultValue={d.premium_percent}
+                        step="0.5"
+                        onBlur={(e) => {
+                          if (parseFloat(e.target.value) !== Number(d.premium_percent)) {
+                            updatePremium(d.key, e.target.value);
+                          }
+                        }}
+                        style={{ width: 70, padding: 6, border: "1px solid #ccc", borderRadius: 4 }}
+                      />
+                      <span style={{ fontSize: 13, color: "#6b7280" }}>%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div
               style={{
                 background: "white",
@@ -1768,9 +1855,11 @@ export default function AdminApp() {
                   type="number"
                   placeholder="Min (Lakhs)"
                   value={rateForm.min}
-                  onChange={(e) =>
-                    setRateForm({ ...rateForm, min: e.target.value })
-                  }
+                  onChange={(e) => {
+                    const f = { ...rateForm, min: e.target.value };
+                    setRateForm(f);
+                    computePreview(f, featureDefs);
+                  }}
                   step="0.5"
                   style={{
                     padding: 8,
@@ -1782,9 +1871,11 @@ export default function AdminApp() {
                   type="number"
                   placeholder="Max (Lakhs)"
                   value={rateForm.max}
-                  onChange={(e) =>
-                    setRateForm({ ...rateForm, max: e.target.value })
-                  }
+                  onChange={(e) => {
+                    const f = { ...rateForm, max: e.target.value };
+                    setRateForm(f);
+                    computePreview(f, featureDefs);
+                  }}
                   step="0.5"
                   style={{
                     padding: 8,
@@ -1807,6 +1898,44 @@ export default function AdminApp() {
                   }}
                 />
               </div>
+
+              {/* Feature checkboxes + live price preview */}
+              {featureDefs.length > 0 && (
+                <div style={{ marginTop: 14, padding: 14, background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Plot Features</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                    {featureDefs.map((d) => (
+                      <label key={d.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={!!rateForm.features?.[d.key]}
+                          onChange={() => toggleFeature(d.key)}
+                        />
+                        {d.label}
+                        {d.key !== "extra_land" && (
+                          <span style={{ color: "#6b7280", fontSize: 12 }}>(+{d.premium_percent}%)</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+
+                  {pricePreview && (
+                    <div style={{ marginTop: 12, padding: 10, background: "white", borderRadius: 6, border: "1px solid #d1fae5" }}>
+                      <div style={{ fontSize: 13 }}>
+                        Estimated with features{pricePreview.totalPct > 0 ? ` (+${pricePreview.totalPct}%)` : ""}:{" "}
+                        <strong style={{ color: "#1a6b3c" }}>
+                          Rs {pricePreview.min}L – {pricePreview.max}L
+                        </strong>
+                      </div>
+                      {pricePreview.extraLand && (
+                        <div style={{ fontSize: 12, color: "#d97706", marginTop: 4 }}>
+                          ⚠️ Extra land is priced separately at purchase time (not included above).
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <button
                 onClick={saveRate}
                 style={{

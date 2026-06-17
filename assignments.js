@@ -452,6 +452,69 @@ async function checkSLA() {
   return result;
 }
 
+// ─── DROP P: PLOT PRICING (features → premium %) ──────────────────────────────
+
+// Get the feature catalog (checkbox definitions) ordered for display.
+async function getFeatureDefs() {
+  const { data } = await supabase
+    .from("plot_feature_defs")
+    .select("key, label, input_type, description, sort_order")
+    .order("sort_order", { ascending: true });
+  return data || [];
+}
+
+// Get premium percentages as a map: { corner: 10, park_face: 10, ... }
+async function getFeaturePremiums() {
+  const { data } = await supabase
+    .from("feature_premiums")
+    .select("feature_key, premium_percent");
+  const map = {};
+  for (const row of data || []) map[row.feature_key] = Number(row.premium_percent) || 0;
+  return map;
+}
+
+// Update one premium % (admin/manager).
+async function updateFeaturePremium(featureKey, percent, userId) {
+  const { error } = await supabase
+    .from("feature_premiums")
+    .upsert(
+      { feature_key: featureKey, premium_percent: percent, updated_by: userId, updated_at: new Date().toISOString() },
+      { onConflict: "feature_key" }
+    );
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
+// Compute a plot's price range from a base range + the checked features.
+// features: object like { corner: true, park_face: true, extra_land: true }
+// Returns { min, max, appliedPercent, hasExtraLand, breakdown }.
+// extra_land is FLAG ONLY — it does not change the number.
+async function computePlotPrice(baseMin, baseMax, features = {}) {
+  const premiums = await getFeaturePremiums();
+  let totalPercent = 0;
+  const breakdown = [];
+  let hasExtraLand = false;
+
+  for (const [key, on] of Object.entries(features || {})) {
+    if (!on) continue;
+    if (key === "extra_land") { hasExtraLand = true; continue; } // flag only, no %
+    const pct = premiums[key] || 0;
+    if (pct > 0) {
+      totalPercent += pct;
+      breakdown.push({ feature: key, percent: pct });
+    }
+  }
+
+  const factor = 1 + totalPercent / 100;
+  return {
+    min: Math.round((baseMin || 0) * factor),
+    max: Math.round((baseMax || 0) * factor),
+    appliedPercent: totalPercent,
+    hasExtraLand,
+    breakdown,
+  };
+}
+
 module.exports = {
   getLeads,
   assignClient,
@@ -467,4 +530,8 @@ module.exports = {
   autoAssignOnEscalation,
   markClientSeen,
   checkSLA,
+  getFeatureDefs,
+  getFeaturePremiums,
+  updateFeaturePremium,
+  computePlotPrice,
 };

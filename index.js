@@ -63,6 +63,14 @@ async function getLiveContext() {
     const rates = ratesRes.data || [];
     const company = companyRes.data || null;
 
+    // Feature premium % (so the bot can quote feature-adjusted prices)
+    let premiums = {};
+    let featureDefs = [];
+    try {
+      premiums = await assignments.getFeaturePremiums();
+      featureDefs = await assignments.getFeatureDefs();
+    } catch (e) { /* non-critical */ }
+
     console.log("🔍 Fetched", projects.length, "projects,", rates.length, "plot rates");
 
     let context = `\n\n=== LIVE COMPANY DATA (Updated) ===\n`;
@@ -93,20 +101,42 @@ async function getLiveContext() {
 
     // Plot Rates
     if (rates.length > 0) {
-      context += `\n--- CURRENT PLOT RATES ---\n`;
+      context += `\n--- CURRENT PLOT RATES (BASE PRICES) ---\n`;
       const ratesByType = {};
       rates.forEach(r => {
         const key = `${r.sector}-${r.size}`;
         if (!ratesByType[key]) {
           ratesByType[key] = [];
         }
-        ratesByType[key].push(`Plot ${r.plot_no_from}-${r.plot_no_to}: Rs ${r.min_price/100000}L - ${r.max_price/100000}L`);
+        // Note any features stored on this plot row
+        let featTag = "";
+        if (r.features && typeof r.features === "object") {
+          const on = Object.entries(r.features).filter(([k, v]) => v).map(([k]) => k);
+          if (on.length) featTag = ` [features: ${on.join(", ")}]`;
+        }
+        ratesByType[key].push(`Plot ${r.plot_no_from}-${r.plot_no_to}: Rs ${r.min_price/100000}L - ${r.max_price/100000}L${featTag}`);
       });
-      
+
       Object.entries(ratesByType).forEach(([key, values]) => {
         context += `\n${key}:\n`;
         values.forEach(v => context += `  ${v}\n`);
       });
+    }
+
+    // Feature premiums — how features adjust the base price
+    if (Object.keys(premiums).length > 0) {
+      context += `\n--- FEATURE PRICING RULES ---\n`;
+      context += `These percentages are ADDED to a plot's BASE price when the plot has that feature. Multiple features add together.\n`;
+      featureDefs.forEach(d => {
+        if (d.key === "extra_land") {
+          context += `• Extra Land: NOT a fixed %. If a plot has extra land, tell the client the extra land is sold separately and the price is decided at purchase — our team will guide them.\n`;
+        } else {
+          const pct = premiums[d.key] || 0;
+          context += `• ${d.label}: +${pct}%\n`;
+        }
+      });
+      context += `\nExample: a 20L base plot that is Corner (+10%) and Park Facing (+10%) = 20L + 20% = 24L.\n`;
+      context += `When a client asks about a specific plot, check its [features] tag above and apply these % to give an accurate estimate. Always present it as an estimate and offer to connect them to an agent for the final price.\n`;
     }
 
     return context;
@@ -650,6 +680,44 @@ app.delete("/api/plot-rates-v2/:id", auth.requireAuth(["admin", "manager"]), asy
     const { error } = await db.supabase.from("plot_rates_v2").delete().eq("id", req.params.id);
     if (error) throw new Error(error.message);
     res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── DROP P: PLOT FEATURES + PREMIUMS ─────────────────────────────────
+// Catalog of feature checkboxes + their current premium %.
+app.get("/api/features", auth.requireAuth(), async (req, res) => {
+  try {
+    const [defs, premiums] = await Promise.all([
+      assignments.getFeatureDefs(),
+      assignments.getFeaturePremiums(),
+    ]);
+    // Merge premium into each def for convenience.
+    const merged = defs.map((d) => ({ ...d, premium_percent: premiums[d.key] || 0 }));
+    res.json(merged);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Edit a feature's premium % (admin/manager).
+app.post("/api/features/premium", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { feature_key, premium_percent } = req.body;
+    const result = await assignments.updateFeaturePremium(feature_key, premium_percent, req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Compute a price range from a base + checked features (live preview / quoting).
+app.post("/api/features/price", auth.requireAuth(), async (req, res) => {
+  try {
+    const { base_min, base_max, features } = req.body;
+    const result = await assignments.computePlotPrice(base_min, base_max, features || {});
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
