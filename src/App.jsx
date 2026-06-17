@@ -40,6 +40,10 @@ export default function AdminApp() {
   });
   const [featureDefs, setFeatureDefs] = useState([]);
   const [pricePreview, setPricePreview] = useState(null);
+  const [settings, setSettings] = useState({});
+  const [newFeature, setNewFeature] = useState({
+    key: "", label: "", input_type: "checkbox", options: "", description: "", sort_order: 0, premium_percent: 0,
+  });
   const [newLeadForm, setNewLeadForm] = useState({ name: "", phone: "" });
   const [excelData, setExcelData] = useState([]);
 
@@ -66,6 +70,7 @@ export default function AdminApp() {
       rates: ["admin", "manager"],
       projects: ["admin", "manager"],
       company: ["admin"],
+      settings: ["admin"],
     };
     if (pagePerms[page] && !pagePerms[page].includes(auth.user.role)) {
       setPage("dashboard");
@@ -248,7 +253,53 @@ export default function AdminApp() {
     if (page === "company") loadCompany();
     if (page === "users") { loadUsers(); loadTeams(); }
     if (page === "rates") loadFeatures();
+    if (page === "settings") { loadFeatures(); loadSettings(); }
   }, [page, auth?.token]);
+
+  const loadSettings = async () => {
+    try {
+      const { data } = await axios.get(`${API}/api/settings`, { headers: getHeaders() });
+      setSettings(data || {});
+    } catch (e) {
+      console.error("loadSettings error:", e.message);
+    }
+  };
+
+  const saveSettings = async (updates) => {
+    try {
+      await axios.post(`${API}/api/settings`, updates, { headers: getHeaders() });
+      setSettings((prev) => ({ ...prev, ...updates }));
+      setMsg("Settings saved");
+    } catch (e) {
+      setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
+
+  const saveFeatureDef = async (feature) => {
+    if (!feature.key.trim() || !feature.label.trim()) {
+      setMsg("Feature key and label are required");
+      return;
+    }
+    try {
+      await axios.post(`${API}/api/features/def`, feature, { headers: getHeaders() });
+      setMsg("Feature saved");
+      setNewFeature({ key: "", label: "", input_type: "checkbox", options: "", description: "", sort_order: 0, premium_percent: 0 });
+      loadFeatures();
+    } catch (e) {
+      setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
+
+  const deleteFeatureDef = async (key) => {
+    if (!window.confirm(`Delete feature "${key}"? This removes it from all plot forms.`)) return;
+    try {
+      await axios.delete(`${API}/api/features/def/${encodeURIComponent(key)}`, { headers: getHeaders() });
+      setMsg("Feature deleted");
+      loadFeatures();
+    } catch (e) {
+      setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
 
   const loadFeatures = async () => {
     try {
@@ -736,6 +787,7 @@ export default function AdminApp() {
           { id: "rates", label: "Plot Rates", roles: ["admin", "manager"] },
           { id: "projects", label: "Projects", roles: ["admin", "manager"] },
           { id: "company", label: "Company Info", roles: ["admin"] },
+          { id: "settings", label: "Settings", roles: ["admin"] },
         ]
           .filter((item) => item.roles.includes(auth?.user?.role))
           .map((item) => (
@@ -863,7 +915,9 @@ export default function AdminApp() {
                       ? "Projects"
                       : page === "company"
                         ? "Company Info"
-                        : "Plot Rates"}
+                        : page === "settings"
+                          ? "Settings"
+                          : "Plot Rates"}
         </h1>
 
         {page === "dashboard" && (
@@ -1746,7 +1800,7 @@ export default function AdminApp() {
                   These percentages are added to a plot's base price when that feature is checked. Extra Land has no % (priced separately).
                 </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-                  {featureDefs.filter((d) => d.key !== "extra_land").map((d) => (
+                  {featureDefs.filter((d) => d.input_type === "checkbox" && d.key !== "extra_land").map((d) => (
                     <div key={d.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <label style={{ fontSize: 13, minWidth: 90 }}>{d.label}</label>
                       <input
@@ -1904,7 +1958,7 @@ export default function AdminApp() {
                 <div style={{ marginTop: 14, padding: 14, background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb" }}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Plot Features</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                    {featureDefs.map((d) => (
+                    {featureDefs.filter((d) => d.input_type === "checkbox").map((d) => (
                       <label key={d.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
                         <input
                           type="checkbox"
@@ -1918,6 +1972,33 @@ export default function AdminApp() {
                       </label>
                     ))}
                   </div>
+
+                  {/* Select-type features (e.g. Road Width) */}
+                  {featureDefs.filter((d) => d.input_type === "select").map((d) => {
+                    let opts = [];
+                    try {
+                      opts = d.options ? (d.options.trim().startsWith("[") ? JSON.parse(d.options) : d.options.split(",").map((s) => s.trim())) : [];
+                    } catch { opts = (d.options || "").split(",").map((s) => s.trim()); }
+                    return (
+                      <div key={d.key} style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                        <label style={{ fontSize: 13, minWidth: 90 }}>{d.label}:</label>
+                        <select
+                          value={rateForm.features?.[d.key] || ""}
+                          onChange={(e) => {
+                            const next = { ...rateForm, features: { ...rateForm.features, [d.key]: e.target.value } };
+                            setRateForm(next);
+                            computePreview(next, featureDefs);
+                          }}
+                          style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4 }}
+                        >
+                          <option value="">— Select —</option>
+                          {opts.map((o) => (
+                            <option key={o} value={o}>{o}</option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
 
                   {pricePreview && (
                     <div style={{ marginTop: 12, padding: 10, background: "white", borderRadius: 6, border: "1px solid #d1fae5" }}>
@@ -2254,6 +2335,137 @@ export default function AdminApp() {
                 style={{ padding: "10px 24px", background: "#1a6b3c", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}
               >
                 Save Company Info
+              </button>
+            </div>
+          </div>
+        )}
+
+        {page === "settings" && (
+          <div style={{ maxWidth: 800 }}>
+            {/* SLA + Assignment */}
+            <div style={{ background: "white", padding: 20, borderRadius: 8, marginBottom: 20, border: "1px solid #e5e7eb" }}>
+              <h3 style={{ marginTop: 0 }}>SLA & Assignment</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                    Agent reminder after (minutes)
+                  </label>
+                  <input
+                    type="number"
+                    defaultValue={settings.sla_agent_reminder_minutes || "10"}
+                    onBlur={(e) => saveSettings({ sla_agent_reminder_minutes: e.target.value })}
+                    style={{ width: "100%", padding: 8, border: "1px solid #ccc", borderRadius: 4 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                    Escalate to manager after (minutes)
+                  </label>
+                  <input
+                    type="number"
+                    defaultValue={settings.sla_manager_escalate_minutes || "30"}
+                    onBlur={(e) => saveSettings({ sla_manager_escalate_minutes: e.target.value })}
+                    style={{ width: "100%", padding: 8, border: "1px solid #ccc", borderRadius: 4 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                    Assignment strategy
+                  </label>
+                  <select
+                    value={settings.assignment_strategy || "round_robin"}
+                    onChange={(e) => saveSettings({ assignment_strategy: e.target.value })}
+                    style={{ width: "100%", padding: 8, border: "1px solid #ccc", borderRadius: 4 }}
+                  >
+                    <option value="round_robin">Round Robin (least-loaded agent)</option>
+                    <option value="random">Random</option>
+                  </select>
+                </div>
+              </div>
+              <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 10 }}>
+                Changes save automatically when you click away from a field.
+              </p>
+            </div>
+
+            {/* Feature management */}
+            <div style={{ background: "white", padding: 20, borderRadius: 8, marginBottom: 20, border: "1px solid #e5e7eb" }}>
+              <h3 style={{ marginTop: 0 }}>Plot Features</h3>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#f9fafb", textAlign: "left" }}>
+                    <th style={{ padding: 8 }}>Label</th>
+                    <th style={{ padding: 8 }}>Key</th>
+                    <th style={{ padding: 8 }}>Type</th>
+                    <th style={{ padding: 8 }}>Premium %</th>
+                    <th style={{ padding: 8 }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {featureDefs.map((d) => (
+                    <tr key={d.key} style={{ borderBottom: "1px solid #eee" }}>
+                      <td style={{ padding: 8 }}>{d.label}</td>
+                      <td style={{ padding: 8, color: "#6b7280", fontFamily: "monospace" }}>{d.key}</td>
+                      <td style={{ padding: 8 }}>{d.input_type}</td>
+                      <td style={{ padding: 8 }}>
+                        {d.input_type === "select" || d.key === "extra_land" ? (
+                          <span style={{ color: "#9ca3af" }}>—</span>
+                        ) : (
+                          <input
+                            type="number"
+                            defaultValue={d.premium_percent}
+                            step="0.5"
+                            onBlur={(e) => {
+                              if (parseFloat(e.target.value) !== Number(d.premium_percent)) {
+                                updatePremium(d.key, e.target.value);
+                              }
+                            }}
+                            style={{ width: 70, padding: 4, border: "1px solid #ccc", borderRadius: 4 }}
+                          />
+                        )}
+                      </td>
+                      <td style={{ padding: 8 }}>
+                        <button
+                          onClick={() => deleteFeatureDef(d.key)}
+                          style={{ padding: "3px 10px", fontSize: 12, background: "#dc2626", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Add feature */}
+            <div style={{ background: "white", padding: 20, borderRadius: 8, border: "1px solid #e5e7eb" }}>
+              <h3 style={{ marginTop: 0 }}>Add Feature</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                <input placeholder="Label (e.g. Corner Plot)" value={newFeature.label}
+                  onChange={(e) => setNewFeature({ ...newFeature, label: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                <input placeholder="Key (e.g. corner — no spaces)" value={newFeature.key}
+                  onChange={(e) => setNewFeature({ ...newFeature, key: e.target.value.toLowerCase().replace(/\s+/g, "_") })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                <select value={newFeature.input_type}
+                  onChange={(e) => setNewFeature({ ...newFeature, input_type: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }}>
+                  <option value="checkbox">Checkbox (single %)</option>
+                  <option value="select">Dropdown (options)</option>
+                </select>
+                {newFeature.input_type === "checkbox" ? (
+                  <input type="number" placeholder="Premium %" value={newFeature.premium_percent}
+                    onChange={(e) => setNewFeature({ ...newFeature, premium_percent: parseFloat(e.target.value) || 0 })}
+                    style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                ) : (
+                  <input placeholder="Options (comma separated, e.g. 30ft,40ft,60ft)" value={newFeature.options}
+                    onChange={(e) => setNewFeature({ ...newFeature, options: e.target.value })}
+                    style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                )}
+              </div>
+              <button onClick={() => saveFeatureDef(newFeature)}
+                style={{ padding: "8px 20px", background: "#1a6b3c", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>
+                Add Feature
               </button>
             </div>
           </div>

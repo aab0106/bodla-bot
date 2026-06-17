@@ -723,6 +723,48 @@ app.post("/api/features/price", auth.requireAuth(), async (req, res) => {
   }
 });
 
+// Create/update a feature definition (admin only).
+app.post("/api/features/def", auth.requireAuth(["admin"]), async (req, res) => {
+  try {
+    const result = await assignments.upsertFeatureDef(req.body, req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete a feature definition (admin only).
+app.delete("/api/features/def/:key", auth.requireAuth(["admin"]), async (req, res) => {
+  try {
+    const result = await assignments.deleteFeatureDef(req.params.key);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── SETTINGS (admin) ─────────────────────────────────────────────────
+app.get("/api/settings", auth.requireAuth(["admin"]), async (req, res) => {
+  try {
+    const settings = await assignments.getAllSettings();
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/settings", auth.requireAuth(["admin"]), async (req, res) => {
+  try {
+    const updates = req.body; // { key: value, ... }
+    for (const [key, value] of Object.entries(updates)) {
+      await assignments.updateSetting(key, String(value), req.user.id);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ─── PROJECTS (NEW) ───────────────────────────────────────────────────
 app.get("/api/projects", auth.requireAuth(), async (req, res) => {
   try {

@@ -515,6 +515,43 @@ async function computePlotPrice(baseMin, baseMax, features = {}) {
   };
 }
 
+// Create or update a feature definition (admin). Also sets its premium.
+async function upsertFeatureDef(feature, userId) {
+  const { key, label, input_type, options, description, sort_order, premium_percent } = feature;
+  // Upsert the definition
+  const { error: defErr } = await supabase
+    .from("plot_feature_defs")
+    .upsert(
+      { key, label, input_type, options: options || null, description: description || null, sort_order: sort_order || 0 },
+      { onConflict: "key" }
+    );
+  if (defErr) throw new Error(defErr.message);
+
+  // Upsert its premium (skip for select types — those price per-option)
+  if (input_type !== "select" && premium_percent !== undefined && premium_percent !== null) {
+    await supabase.from("feature_premiums").upsert(
+      { feature_key: key, premium_percent, updated_by: userId, updated_at: new Date().toISOString() },
+      { onConflict: "feature_key" }
+    );
+  }
+  return { success: true };
+}
+
+async function deleteFeatureDef(key) {
+  await supabase.from("feature_premiums").delete().eq("feature_key", key);
+  const { error } = await supabase.from("plot_feature_defs").delete().eq("key", key);
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
+// Get ALL settings as a key/value map (for the Settings page).
+async function getAllSettings() {
+  const { data } = await supabase.from("settings").select("key, value");
+  const map = {};
+  for (const row of data || []) map[row.key] = row.value;
+  return map;
+}
+
 module.exports = {
   getLeads,
   assignClient,
@@ -534,4 +571,7 @@ module.exports = {
   getFeaturePremiums,
   updateFeaturePremium,
   computePlotPrice,
+  upsertFeatureDef,
+  deleteFeatureDef,
+  getAllSettings,
 };
