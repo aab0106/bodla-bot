@@ -8,10 +8,29 @@ const db = require("./database");
 const auth = require("./auth");
 const assignments = require("./assignments");
 const fs = require("fs");
+const rateLimit = require("express-rate-limit");
 
 const app = express();
+app.set("trust proxy", 1); // Render runs behind a proxy; needed for correct client IPs
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
+
+// Brute-force protection on login: max 8 attempts per 15 min per IP.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many login attempts. Please try again in 15 minutes." },
+});
+
+// General API limiter: 300 requests/min per IP (generous; stops abuse/scraping).
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // CORS Middleware - MUST be first
 app.use((req, res, next) => {
@@ -26,6 +45,9 @@ app.use((req, res, next) => {
 });
 
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+// Apply the general rate limiter to all API routes.
+app.use("/api/", apiLimiter);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ─── FETCH LIVE DATA FROM DATABASE ────────────────────────────────────
@@ -237,7 +259,25 @@ async function notifyAgent(clientPhone, clientName, chatHistory) {
 }
 
 // ─── MAIN WEBHOOK ────────────────────────────────────────────────────
-app.post("/webhook", async (req, res) => {
+// Validate that requests genuinely come from Twilio (unless explicitly disabled).
+function validateTwilio(req, res, next) {
+  if (process.env.VALIDATE_TWILIO === "false") return next(); // escape hatch for local testing
+  const signature = req.headers["x-twilio-signature"];
+  const url = `https://${req.headers.host}${req.originalUrl}`;
+  const valid = twilio.validateRequest(
+    process.env.TWILIO_AUTH_TOKEN,
+    signature,
+    url,
+    req.body
+  );
+  if (!valid) {
+    console.warn("⛔ Rejected webhook: invalid Twilio signature from", req.ip);
+    return res.status(403).send("Forbidden");
+  }
+  next();
+}
+
+app.post("/webhook", validateTwilio, async (req, res) => {
 console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
 
   const incomingMsg = req.body.Body?.trim();
@@ -421,7 +461,7 @@ app.post("/api/notifications/read", auth.requireAuth(["admin", "manager", "agent
 
 // ─── AUTH & ADMIN ─────────────────────────────────────────────────────
 
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Username and password required" });

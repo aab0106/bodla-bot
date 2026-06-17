@@ -5,11 +5,14 @@ const ws = require("ws");
 
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY,
   { realtime: { transport: ws } }
 );
 
 const JWT_SECRET = process.env.JWT_SECRET || "bodlabot-secret-2026";
+if (!process.env.JWT_SECRET) {
+  console.warn("🚨 JWT_SECRET not set — using insecure default. Set it in Render env!");
+}
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 async function login(username, password) {

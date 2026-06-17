@@ -1,9 +1,18 @@
 const { createClient: createSupabaseClient } = require("@supabase/supabase-js");
 const ws = require("ws");
 
+// Prefer the service_role key (bypasses RLS — correct for a trusted backend).
+// Falls back to the anon key if service_role isn't set yet, so nothing breaks
+// before you add it. Add SUPABASE_SERVICE_ROLE_KEY in Render env, THEN run the
+// RLS migration.
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.warn("⚠️ Using anon key. Add SUPABASE_SERVICE_ROLE_KEY before enabling RLS.");
+}
+
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY,
+  supabaseKey,
   {
     realtime: { transport: ws },
   }
