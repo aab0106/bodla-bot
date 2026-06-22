@@ -2489,6 +2489,11 @@ export default function AdminApp() {
                 style={{ padding: "8px 20px", background: "#1a6b3c", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>
                 Add Feature
               </button>
+              {msg && (
+                <span style={{ marginLeft: 12, fontSize: 13, color: msg.includes("saved") || msg.includes("✓") ? "#1a6b3c" : "#dc2626" }}>
+                  {msg}
+                </span>
+              )}
             </div>
           </div>
         )}
