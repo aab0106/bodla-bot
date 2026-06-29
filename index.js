@@ -115,7 +115,8 @@ async function getLiveContext() {
           const on = Object.entries(r.features).filter(([k, v]) => v).map(([k]) => k);
           if (on.length) featTag = ` [features: ${on.join(", ")}]`;
         }
-        ratesByType[key].push(`Plot ${r.plot_no_from}-${r.plot_no_to}: Rs ${r.min_price/100000}L - ${r.max_price/100000}L${featTag}`);
+        const subTag = r.sub_category ? ` [${r.sub_category}]` : "";
+        ratesByType[key].push(`Plot ${r.plot_no_from}-${r.plot_no_to}${subTag}: Rs ${r.min_price/100000}L - ${r.max_price/100000}L${featTag}`);
       });
 
       Object.entries(ratesByType).forEach(([key, values]) => {
@@ -658,8 +659,8 @@ app.get("/api/plot-rates-v2", auth.requireAuth(), async (req, res) => {
 
 app.post("/api/plot-rates-v2", auth.requireAuth(["admin", "manager"]), async (req, res) => {
   try {
-    const { id, sector, plot_type, size, plot_no_from, plot_no_to, min_price, max_price, features, notes } = req.body;
-    const payload = { sector, plot_type, size, plot_no_from, plot_no_to, min_price, max_price, features: features||{}, notes, updated_by: req.user.id, updated_at: new Date().toISOString() };
+    const { id, sector, sub_category, plot_type, size, plot_no_from, plot_no_to, min_price, max_price, features, notes } = req.body;
+    const payload = { sector, sub_category: sub_category || null, plot_type, size, plot_no_from, plot_no_to, min_price, max_price, features: features||{}, notes, updated_by: req.user.id, updated_at: new Date().toISOString() };
 
     let result;
     if (id) {

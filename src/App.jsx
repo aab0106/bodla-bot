@@ -29,6 +29,7 @@ export default function AdminApp() {
 
   const [rateForm, setRateForm] = useState({
     sector: "",
+    sub_category: "",
     type: "residential",
     size: "",
     from: "",
@@ -523,6 +524,7 @@ export default function AdminApp() {
         {
           id: editingRateId || undefined,
           sector: rateForm.sector,
+          sub_category: rateForm.sub_category,
           plot_type: rateForm.type,
           size: rateForm.size,
           plot_no_from: parseInt(rateForm.from),
@@ -538,6 +540,7 @@ export default function AdminApp() {
       setEditingRateId(null);
       setRateForm({
         sector: "",
+        sub_category: "",
         type: "residential",
         size: "",
         from: "",
@@ -558,6 +561,7 @@ export default function AdminApp() {
     setEditingRateId(r.id);
     const form = {
       sector: r.sector || "",
+      sub_category: r.sub_category || "",
       type: r.plot_type || "residential",
       size: r.size || "",
       from: r.plot_no_from ?? "",
@@ -575,7 +579,7 @@ export default function AdminApp() {
 
   const cancelEditRate = () => {
     setEditingRateId(null);
-    setRateForm({ sector: "", type: "residential", size: "", from: "", to: "", min: "", max: "", notes: "", features: {} });
+    setRateForm({ sector: "", sub_category: "", type: "residential", size: "", from: "", to: "", min: "", max: "", notes: "", features: {} });
     setPricePreview(null);
     setMsg("");
   };
@@ -1914,6 +1918,19 @@ export default function AdminApp() {
                     borderRadius: 4,
                   }}
                 />
+                <input
+                  type="text"
+                  placeholder="Sub-category / Area (e.g. M1)"
+                  value={rateForm.sub_category}
+                  onChange={(e) =>
+                    setRateForm({ ...rateForm, sub_category: e.target.value })
+                  }
+                  style={{
+                    padding: 8,
+                    border: "1px solid #ccc",
+                    borderRadius: 4,
+                  }}
+                />
                 <select
                   value={rateForm.type}
                   onChange={(e) =>
@@ -2301,7 +2318,7 @@ export default function AdminApp() {
                 <tbody>
                   {rates.map((r, i) => (
                     <tr key={r.id || i} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                      <td style={{ padding: 12 }}>Sector {r.sector}</td>
+                      <td style={{ padding: 12 }}>Sector {r.sector}{r.sub_category ? ` (${r.sub_category})` : ""}</td>
                       <td style={{ padding: 12 }}>{r.plot_type}</td>
                       <td style={{ padding: 12 }}>{r.size}</td>
                       <td
