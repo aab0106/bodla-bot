@@ -847,7 +847,7 @@ export default function AdminApp() {
           { id: "projects", label: "Projects", roles: ["admin", "manager"] },
           { id: "company", label: "Company Info", roles: ["admin"] },
           { id: "settings", label: "Settings", roles: ["admin"] },
-          { id: "inventory", label: "Inventory", roles: ["admin", "manager"] },
+          { id: "inventory", label: "Plots Data", roles: ["admin", "manager"] },
         ]
           .filter((item) => item.roles.includes(auth?.user?.role))
           .map((item) => (
@@ -978,7 +978,7 @@ export default function AdminApp() {
                         : page === "settings"
                           ? "Settings"
                           : page === "inventory"
-                            ? "Inventory"
+                            ? "Plots Data"
                             : "Plot Rates"}
         </h1>
 
@@ -2563,7 +2563,7 @@ export default function AdminApp() {
         {page === "inventory" && (
           <div style={{ maxWidth: 800 }}>
             <div style={{ background: "white", padding: 20, borderRadius: 8, marginBottom: 20, border: "1px solid #e5e7eb" }}>
-              <h3 style={{ marginTop: 0 }}>Plot Inventory</h3>
+              <h3 style={{ marginTop: 0 }}>Plots Data</h3>
               <p style={{ fontSize: 13, color: "#4b5563" }}>
                 <strong>{invStats.total.toLocaleString()}</strong> plots currently loaded.
               </p>
