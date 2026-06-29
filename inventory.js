@@ -123,6 +123,70 @@ async function resolvePlot(sector, plotNo, size = null) {
   return { plot, band, found: !!plot || !!band };
 }
 
+// Try to extract sector + plot number from a free-text message (code first pass).
+// Handles: "sector P plot 6744", "P block 6744", "plot no 6744 sector p", "P-6744"
+function extractPlotMention(text) {
+  if (!text) return null;
+  const t = String(text);
+
+  // Find a plot number (3-5 digits is typical for DHA)
+  const plotMatch = t.match(/\b(?:plot|plt|پلاٹ)?\s*(?:no\.?|number|#)?\s*(\d{2,6})\b/i);
+  // Find a sector letter (single A-Z, optionally with sub like P or M)
+  const sectorMatch = t.match(/\b(?:sector|sec|block|بلاک|سیکٹر)\s*([A-Za-z])\b/i)
+    || t.match(/\b([A-Za-z])\s*(?:sector|sec|block)\b/i)  // "P block"
+    || t.match(/\b([A-Za-z])[-\s]*\d{2,6}\b/); // "P-6744" or "P 6744"
+
+  if (!plotMatch) return null;
+  const plotNo = parseInt(plotMatch[1], 10);
+  const sector = sectorMatch ? sectorMatch[1].toUpperCase() : null;
+
+  // Optional size hint
+  let size = null;
+  if (/\b5\s*marla\b/i.test(t)) size = "5 Marla";
+  else if (/\b8\s*marla\b/i.test(t)) size = "8 Marla";
+  else if (/\b10\s*marla\b/i.test(t)) size = "10 Marla";
+  else if (/\b(1\s*kanal|kanal)\b/i.test(t)) size = "1 Kanal";
+
+  return { sector, plotNo, size, confident: !!sector };
+}
+
+// Build a resolved quote object the bot can use in its reply.
+// Applies feature premiums to the band price. Always meant to be quoted as approx/estimate.
+async function buildPlotQuote(sector, plotNo, size, getFeaturePremiums) {
+  const { plot, band } = await resolvePlot(sector, plotNo, size);
+  if (!plot && !band) return null;
+
+  let quote = { sector, plotNo, size: size || (plot && plot.plot_size) || null, plot, band };
+
+  if (band) {
+    const premiums = await getFeaturePremiums();
+    const feats = (plot && plot.features) || (band.features) || {};
+    let totalPct = 0;
+    const applied = [];
+    let extraLand = false;
+    for (const [key, val] of Object.entries(feats)) {
+      if (!val) continue;
+      if (key === "extra_land") { extraLand = true; continue; }
+      const pct = premiums[key] || 0;
+      if (pct > 0) { totalPct += pct; applied.push({ key, pct }); }
+    }
+    const factor = 1 + totalPct / 100;
+    quote.baseMin = band.min_price / 100000;
+    quote.baseMax = band.max_price / 100000;
+    quote.estMin = +(quote.baseMin * factor).toFixed(1);
+    quote.estMax = +(quote.baseMax * factor).toFixed(1);
+    quote.appliedPercent = totalPct;
+    quote.appliedFeatures = applied;
+    quote.subCategory = band.sub_category || null;
+    quote.hasExtraLand = extraLand;
+  }
+  if (plot) {
+    quote.features = Object.keys(plot.features || {});
+    quote.nearbyRoad = plot.nearby_road || null;
+  }
+  return quote;
+}
+
 module.exports = {
   mapRow,
   importRows,
@@ -130,4 +194,6 @@ module.exports = {
   buildFeatureMap,
   normRoadWidth,
   yesNo,
+  extractPlotMention,
+  buildPlotQuote,
 };

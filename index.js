@@ -343,9 +343,64 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
     // 4. Load chat history
     const history = await db.getChatHistory(clientPhone);
 
-    // 5. Build messages for OpenAI (system prompt is handoff-aware)
+    // 4b. Try to resolve a specific plot the client mentioned (code first pass).
+    let plotFacts = "";
+    let mention = inventory.extractPlotMention(incomingMsg);
+    // AI fallback: if we found a plot number but not the sector, or nothing clear,
+    // and the message looks plot-related, let the AI extract.
+    if ((!mention || !mention.confident) && /\b\d{2,6}\b|plot|پلاٹ|rate|قیمت|price/i.test(incomingMsg)) {
+      try {
+        const ext = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [{
+            role: "user",
+            content: `Extract the DHA plot reference from this message. Reply ONLY as JSON {"sector":"<letter or null>","plot":<number or null>,"size":"<e.g. 5 Marla or null>"}. Message: "${incomingMsg}"`
+          }],
+          max_tokens: 60,
+          temperature: 0,
+        });
+        const parsed = JSON.parse(ext.choices[0].message.content.replace(/```json|```/g, "").trim());
+        if (parsed.plot) {
+          mention = {
+            sector: parsed.sector ? String(parsed.sector).toUpperCase() : (mention && mention.sector) || null,
+            plotNo: parseInt(parsed.plot, 10),
+            size: parsed.size || (mention && mention.size) || null,
+            confident: !!parsed.sector,
+          };
+        }
+      } catch (e) { /* extraction is best-effort */ }
+    }
+
+    if (mention && mention.sector && mention.plotNo) {
+      try {
+        const quote = await inventory.buildPlotQuote(
+          mention.sector, mention.plotNo, mention.size, assignments.getFeaturePremiums
+        );
+        if (quote) {
+          plotFacts = `\n\n--- RESOLVED PLOT (use this for the client's specific plot question) ---\n`;
+          plotFacts += `Sector ${quote.sector}, Plot ${quote.plotNo}`;
+          if (quote.size) plotFacts += `, ${quote.size}`;
+          if (quote.subCategory) plotFacts += ` (sub-category ${quote.subCategory})`;
+          plotFacts += `\n`;
+          if (quote.features && quote.features.length) plotFacts += `Features: ${quote.features.join(", ")}\n`;
+          if (quote.nearbyRoad) plotFacts += `Near: ${quote.nearbyRoad}\n`;
+          if (quote.estMin) {
+            plotFacts += `ESTIMATED price (base ${quote.baseMin}-${quote.baseMax}L + ${quote.appliedPercent}% features): approx Rs ${quote.estMin}L - ${quote.estMax}L\n`;
+            plotFacts += `IMPORTANT: Quote this as an APPROXIMATE/ESTIMATE only. Tell the client the exact price will be confirmed by an agent. Never state it as a fixed final price.\n`;
+          } else {
+            plotFacts += `No price band is set for this plot number yet — do NOT invent a price. Offer to connect them to an agent for pricing.\n`;
+          }
+          if (quote.hasExtraLand) plotFacts += `This plot has EXTRA LAND beside it, sold separately — mention the price differs and an agent will guide them.\n`;
+          console.log("📍 Resolved plot:", quote.sector, quote.plotNo, quote.estMin ? `~${quote.estMin}-${quote.estMax}L` : "(no band)");
+        }
+      } catch (e) {
+        console.error("Plot resolve error:", e.message);
+      }
+    }
+
+    // 5. Build messages for OpenAI (system prompt is handoff-aware + plot facts)
     const messages = [
-      { role: "system", content: await buildSystemPrompt(client) },
+      { role: "system", content: (await buildSystemPrompt(client)) + plotFacts },
       ...history.map((m) => ({ 
         role: m.role === "agent" ? "assistant" : m.role, 
         content: m.content
