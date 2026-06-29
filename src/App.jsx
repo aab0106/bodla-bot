@@ -44,6 +44,11 @@ export default function AdminApp() {
   const [newFeature, setNewFeature] = useState({
     key: "", label: "", input_type: "checkbox", options: "", description: "", sort_order: 0, premium_percent: 0,
   });
+  const [invStats, setInvStats] = useState({ total: 0 });
+  const [invImporting, setInvImporting] = useState(false);
+  const [invResult, setInvResult] = useState(null);
+  const [resolveQuery, setResolveQuery] = useState({ sector: "", plot_no: "", size: "" });
+  const [resolveResult, setResolveResult] = useState(null);
   const [newLeadForm, setNewLeadForm] = useState({ name: "", phone: "" });
   const [excelData, setExcelData] = useState([]);
 
@@ -71,6 +76,7 @@ export default function AdminApp() {
       projects: ["admin", "manager"],
       company: ["admin"],
       settings: ["admin"],
+      inventory: ["admin", "manager"],
     };
     if (pagePerms[page] && !pagePerms[page].includes(auth.user.role)) {
       setPage("dashboard");
@@ -254,7 +260,60 @@ export default function AdminApp() {
     if (page === "users") { loadUsers(); loadTeams(); }
     if (page === "rates") loadFeatures();
     if (page === "settings") { loadFeatures(); loadSettings(); }
+    if (page === "inventory") loadInvStats();
   }, [page, auth?.token]);
+
+  const loadInvStats = async () => {
+    try {
+      const { data } = await axios.get(`${API}/api/inventory/stats`, { headers: getHeaders() });
+      setInvStats(data || { total: 0 });
+    } catch (e) { /* non-critical */ }
+  };
+
+  // Parse Excel client-side, send rows to backend in chunks (handles big files).
+  const importInventory = async (file) => {
+    if (!file) return;
+    setInvImporting(true);
+    setInvResult(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
+      if (!rows.length) { setMsg("Sheet is empty"); setInvImporting(false); return; }
+
+      // Send in chunks of 2000 rows to avoid huge single requests.
+      const CHUNK = 2000;
+      let inserted = 0, skipped = 0, total = rows.length;
+      const errors = [];
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const slice = rows.slice(i, i + CHUNK);
+        const { data } = await axios.post(`${API}/api/inventory/import`, { rows: slice }, { headers: getHeaders() });
+        inserted += data.inserted || 0;
+        skipped += data.skipped || 0;
+        if (data.errors?.length) errors.push(...data.errors);
+        setInvResult({ inserted, skipped, total, inProgress: i + CHUNK < rows.length });
+      }
+      setInvResult({ inserted, skipped, total, errors, inProgress: false });
+      setMsg(`Imported ${inserted} plots`);
+      loadInvStats();
+    } catch (e) {
+      setMsg("Import error: " + (e.response?.data?.error || e.message));
+    }
+    setInvImporting(false);
+  };
+
+  const resolvePlot = async () => {
+    try {
+      const { data } = await axios.get(`${API}/api/inventory/resolve`, {
+        headers: getHeaders(),
+        params: resolveQuery,
+      });
+      setResolveResult(data);
+    } catch (e) {
+      setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
 
   const loadSettings = async () => {
     try {
@@ -788,6 +847,7 @@ export default function AdminApp() {
           { id: "projects", label: "Projects", roles: ["admin", "manager"] },
           { id: "company", label: "Company Info", roles: ["admin"] },
           { id: "settings", label: "Settings", roles: ["admin"] },
+          { id: "inventory", label: "Inventory", roles: ["admin", "manager"] },
         ]
           .filter((item) => item.roles.includes(auth?.user?.role))
           .map((item) => (
@@ -917,7 +977,9 @@ export default function AdminApp() {
                         ? "Company Info"
                         : page === "settings"
                           ? "Settings"
-                          : "Plot Rates"}
+                          : page === "inventory"
+                            ? "Inventory"
+                            : "Plot Rates"}
         </h1>
 
         {page === "dashboard" && (
@@ -2493,6 +2555,89 @@ export default function AdminApp() {
                 <span style={{ marginLeft: 12, fontSize: 13, color: msg.includes("saved") || msg.includes("✓") ? "#1a6b3c" : "#dc2626" }}>
                   {msg}
                 </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {page === "inventory" && (
+          <div style={{ maxWidth: 800 }}>
+            <div style={{ background: "white", padding: 20, borderRadius: 8, marginBottom: 20, border: "1px solid #e5e7eb" }}>
+              <h3 style={{ marginTop: 0 }}>Plot Inventory</h3>
+              <p style={{ fontSize: 13, color: "#4b5563" }}>
+                <strong>{invStats.total.toLocaleString()}</strong> plots currently loaded.
+              </p>
+              <p style={{ fontSize: 12, color: "#6b7280" }}>
+                Upload your DHA plot sheet (Excel). Expected columns: Phase, Sector, Plot No, Plot Type,
+                Plot Size, Corner, Nearby Road, Road Width, Park Face, Nearby Park. Re-uploading updates
+                existing plots (matched by sector + plot no + size).
+              </p>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                disabled={invImporting}
+                onChange={(e) => importInventory(e.target.files[0])}
+                style={{ marginTop: 8 }}
+              />
+              {invImporting && (
+                <div style={{ marginTop: 12, color: "#d97706", fontSize: 13 }}>
+                  Importing… {invResult ? `${invResult.inserted} so far` : ""}
+                </div>
+              )}
+              {invResult && !invImporting && (
+                <div style={{ marginTop: 12, padding: 10, background: "#f0fdf4", borderRadius: 6, fontSize: 13 }}>
+                  ✓ Imported <strong>{invResult.inserted}</strong> of {invResult.total} rows.
+                  {invResult.skipped > 0 && <span style={{ color: "#d97706" }}> ({invResult.skipped} skipped — missing sector/plot no)</span>}
+                  {invResult.errors?.length > 0 && (
+                    <div style={{ color: "#dc2626", marginTop: 6 }}>
+                      {invResult.errors.length} batch error(s): {invResult.errors[0]}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Test plot resolution */}
+            <div style={{ background: "white", padding: 20, borderRadius: 8, border: "1px solid #e5e7eb" }}>
+              <h3 style={{ marginTop: 0 }}>Test Plot Lookup</h3>
+              <p style={{ fontSize: 12, color: "#6b7280" }}>
+                Check what the bot resolves for a plot — its features (from inventory) and price band (from rates).
+              </p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                <input placeholder="Sector (e.g. P)" value={resolveQuery.sector}
+                  onChange={(e) => setResolveQuery({ ...resolveQuery, sector: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4, width: 120 }} />
+                <input placeholder="Plot No" value={resolveQuery.plot_no}
+                  onChange={(e) => setResolveQuery({ ...resolveQuery, plot_no: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4, width: 120 }} />
+                <input placeholder="Size (optional)" value={resolveQuery.size}
+                  onChange={(e) => setResolveQuery({ ...resolveQuery, size: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4, width: 140 }} />
+                <button onClick={resolvePlot}
+                  style={{ padding: "8px 20px", background: "#1a6b3c", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>
+                  Look up
+                </button>
+              </div>
+              {resolveResult && (
+                <div style={{ padding: 12, background: "#f9fafb", borderRadius: 6, fontSize: 13 }}>
+                  {resolveResult.plot ? (
+                    <div>
+                      <strong>Plot found:</strong> Sector {resolveResult.plot.sector}, Plot {resolveResult.plot.plot_no}, {resolveResult.plot.plot_size}<br />
+                      Features: {Object.keys(resolveResult.plot.features || {}).join(", ") || "none"}<br />
+                      {resolveResult.plot.nearby_road && <span>Near: {resolveResult.plot.nearby_road}<br /></span>}
+                    </div>
+                  ) : (
+                    <div style={{ color: "#d97706" }}>Plot not found in inventory.</div>
+                  )}
+                  {resolveResult.band ? (
+                    <div style={{ marginTop: 6 }}>
+                      <strong>Price band:</strong> Rs {resolveResult.band.min_price / 100000}L – {resolveResult.band.max_price / 100000}L
+                      {resolveResult.band.sub_category && ` (${resolveResult.band.sub_category})`}
+                    </div>
+                  ) : (
+                    <div style={{ color: "#d97706", marginTop: 6 }}>No price band covers this plot number.</div>
+                  )}
+                </div>
               )}
             </div>
           </div>

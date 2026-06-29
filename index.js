@@ -7,6 +7,7 @@ const OpenAI = require("openai");
 const db = require("./database");
 const auth = require("./auth");
 const assignments = require("./assignments");
+const inventory = require("./inventory");
 const fs = require("fs");
 const rateLimit = require("express-rate-limit");
 
@@ -762,6 +763,45 @@ app.post("/api/settings", auth.requireAuth(["admin"]), async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── PLOT INVENTORY ───────────────────────────────────────────────────
+// Bulk import: frontend parses the Excel (SheetJS) and posts rows here.
+app.post("/api/inventory/import", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const rows = req.body.rows;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: "No rows provided" });
+    }
+    const result = await inventory.importRows(rows);
+    res.json(result);
+  } catch (err) {
+    console.error("inventory import error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Resolve a single plot (features + pricing band) — for testing/admin.
+app.get("/api/inventory/resolve", auth.requireAuth(), async (req, res) => {
+  try {
+    const { sector, plot_no, size } = req.query;
+    const result = await inventory.resolvePlot(sector, parseInt(plot_no, 10), size || null);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Inventory stats (how many plots loaded, by sector).
+app.get("/api/inventory/stats", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { count } = await db.supabase
+      .from("plot_inventory")
+      .select("*", { count: "exact", head: true });
+    res.json({ total: count || 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
