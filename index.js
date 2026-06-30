@@ -174,6 +174,18 @@ YOUR CORE ROLE:
 - Engage in natural conversation
 - Provide accurate information from company database
 
+🔒 CRITICAL PRICING RULES (never break these):
+- NEVER reveal internal plot-number ranges or bands. Do NOT say things like "plots 6700 to 6850 are priced at...". The client only cares about THEIR plot — talk about that specific plot only.
+- ALWAYS phrase any price as approximate: use "approx", "andazan", "estimate". Never give a fixed/final price.
+- When you are given a RESOLVED PLOT block below, its features are already known — use them, do NOT ask the client whether the plot is corner/park-facing/etc.
+- For exact/final price, offer to connect them with an agent.
+
+🗣️ TALKING STYLE:
+- Warm, natural, concise — like a helpful human salesperson, not a form.
+- Avoid repeating the same sentence structure every reply. Vary your wording.
+- Don't over-ask. If you already have the info (e.g. resolved plot features), just give the answer.
+- Match the client's language (Urdu/Roman-Urdu/English) naturally.
+
 YOUR BEHAVIOR:
 
 🎯 INFORMATION STAGE:
@@ -377,21 +389,44 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
           mention.sector, mention.plotNo, mention.size, assignments.getFeaturePremiums
         );
         if (quote) {
-          plotFacts = `\n\n--- RESOLVED PLOT (use this for the client's specific plot question) ---\n`;
-          plotFacts += `Sector ${quote.sector}, Plot ${quote.plotNo}`;
-          if (quote.size) plotFacts += `, ${quote.size}`;
-          if (quote.subCategory) plotFacts += ` (sub-category ${quote.subCategory})`;
-          plotFacts += `\n`;
-          if (quote.features && quote.features.length) plotFacts += `Features: ${quote.features.join(", ")}\n`;
-          if (quote.nearbyRoad) plotFacts += `Near: ${quote.nearbyRoad}\n`;
-          if (quote.estMin) {
-            plotFacts += `ESTIMATED price (base ${quote.baseMin}-${quote.baseMax}L + ${quote.appliedPercent}% features): approx Rs ${quote.estMin}L - ${quote.estMax}L\n`;
-            plotFacts += `IMPORTANT: Quote this as an APPROXIMATE/ESTIMATE only. Tell the client the exact price will be confirmed by an agent. Never state it as a fixed final price.\n`;
-          } else {
-            plotFacts += `No price band is set for this plot number yet — do NOT invent a price. Offer to connect them to an agent for pricing.\n`;
+          // Friendly labels for feature keys
+          const labels = {
+            corner: "Corner", park_facing: "Park Facing", near_park: "Near Park",
+            main_boulevard: "Main Boulevard", near_mosque: "Near Mosque",
+            near_commercial: "Near Commercial", near_school: "Near School",
+            near_gate: "Near DHA Gate", double_road: "Double Road",
+          };
+          const featLabels = (quote.features || [])
+            .filter((k) => k !== "near_road" && k !== "extra_land")
+            .map((k) => labels[k] || k);
+          if (quote.nearbyRoad || (quote.features || []).includes("near_road")) {
+            // road width is informative, not a premium label here
           }
-          if (quote.hasExtraLand) plotFacts += `This plot has EXTRA LAND beside it, sold separately — mention the price differs and an agent will guide them.\n`;
-          console.log("📍 Resolved plot:", quote.sector, quote.plotNo, quote.estMin ? `~${quote.estMin}-${quote.estMax}L` : "(no band)");
+
+          plotFacts = `\n\n--- RESOLVED PLOT — the client asked about THIS specific plot. You already KNOW its details below. Do NOT ask the client whether it is corner/park-facing etc. — that information is given here. ---\n`;
+          plotFacts += `Plot: Sector ${quote.sector}, Plot #${quote.plotNo}`;
+          if (quote.size) plotFacts += `, ${quote.size}`;
+          plotFacts += `\n`;
+          if (featLabels.length) {
+            plotFacts += `This plot's known features: ${featLabels.join(", ")}.\n`;
+          } else {
+            plotFacts += `This plot has no special premium features (standard plot).\n`;
+          }
+          if (quote.nearbyRoad) plotFacts += `Location note: ${quote.nearbyRoad}.\n`;
+
+          if (quote.estMin) {
+            plotFacts += `Approximate price for THIS plot (already adjusted for its features${quote.appliedPercent ? `, +${quote.appliedPercent}%` : ""}): approx Rs ${quote.estMin}L to ${quote.estMax}L.\n`;
+            plotFacts += `RULES FOR YOUR REPLY:\n`;
+            plotFacts += `- Mention the plot's features naturally, then give the approximate price range above.\n`;
+            plotFacts += `- ALWAYS say "approx" / "andazan" / "estimate" — never a fixed final price.\n`;
+            plotFacts += `- NEVER reveal internal plot-number ranges/bands (e.g. do NOT say "plots 6700-6850"). Talk only about THIS plot number.\n`;
+            plotFacts += `- Do NOT ask the client about features — you already know them.\n`;
+            plotFacts += `- Offer that an agent can confirm the exact, final price.\n`;
+          } else {
+            plotFacts += `No price is set for this plot yet — do NOT invent one. Warmly offer to connect them with an agent for the price.\n`;
+          }
+          if (quote.hasExtraLand) plotFacts += `This plot has EXTRA LAND beside it (sold separately) — mention the price will differ and an agent will guide them.\n`;
+          console.log("📍 Resolved plot:", quote.sector, quote.plotNo, "feats:", featLabels.join("+") || "none", quote.estMin ? `~${quote.estMin}-${quote.estMax}L` : "(no band)");
         }
       } catch (e) {
         console.error("Plot resolve error:", e.message);
