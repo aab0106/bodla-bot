@@ -56,6 +56,9 @@ export default function AdminApp() {
   // Drop 1: Projects + Company + edit-rate state
   const [projects, setProjects] = useState([]);
   const [newProject, setNewProject] = useState("");
+  const [projectForm, setProjectForm] = useState({ id: null, name: "", location: "", description: "", status: "available", brochure_url: "" });
+  const [unitForm, setUnitForm] = useState({ unit_type: "", size: "", price_min: "", price_max: "", availability: "available" });
+  const [activeProjectId, setActiveProjectId] = useState(null);
   const [company, setCompany] = useState({
     name: "", about: "", website: "", phone: "", email: "", address: "",
   });
@@ -211,14 +214,55 @@ export default function AdminApp() {
     }
   };
 
-  const addProject = async () => {
-    if (!newProject.trim()) return;
+  const saveProject = async () => {
+    if (!projectForm.name.trim()) { setMsg("Project name required"); return; }
     try {
-      await axios.post(`${API}/api/projects`, { name: newProject.trim() }, {
-        headers: getHeaders(),
-      });
-      setNewProject("");
-      setMsg("Project added");
+      await axios.post(`${API}/api/projects`, projectForm, { headers: getHeaders() });
+      setMsg(projectForm.id ? "Project updated" : "Project added");
+      setProjectForm({ id: null, name: "", location: "", description: "", status: "available", brochure_url: "" });
+      loadProjects();
+    } catch (e) {
+      setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
+
+  const editProject = (p) => {
+    setProjectForm({ id: p.id, name: p.name || "", location: p.location || "", description: p.description || "", status: p.status || "available", brochure_url: p.brochure_url || "" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const deleteProject = async (id) => {
+    if (!window.confirm("Delete this project and all its units?")) return;
+    try {
+      await axios.delete(`${API}/api/projects/${id}`, { headers: getHeaders() });
+      setMsg("Project deleted");
+      loadProjects();
+    } catch (e) {
+      setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
+
+  const addUnit = async (projectId) => {
+    if (!unitForm.unit_type.trim()) { setMsg("Unit type required"); return; }
+    try {
+      await axios.post(`${API}/api/projects/${projectId}/units`, {
+        ...unitForm,
+        price_min: unitForm.price_min ? Math.round(parseFloat(unitForm.price_min) * 100000) : null,
+        price_max: unitForm.price_max ? Math.round(parseFloat(unitForm.price_max) * 100000) : null,
+      }, { headers: getHeaders() });
+      setMsg("Unit added");
+      setUnitForm({ unit_type: "", size: "", price_min: "", price_max: "", availability: "available" });
+      setActiveProjectId(null);
+      loadProjects();
+    } catch (e) {
+      setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
+
+  const deleteUnit = async (unitId) => {
+    if (!window.confirm("Delete this unit?")) return;
+    try {
+      await axios.delete(`${API}/api/projects/units/${unitId}`, { headers: getHeaders() });
       loadProjects();
     } catch (e) {
       setMsg("Error: " + (e.response?.data?.error || e.message));
@@ -2370,33 +2414,108 @@ export default function AdminApp() {
         )}
 
         {page === "projects" && (
-          <div>
-            <h1 style={{ fontSize: 24, marginBottom: 20 }}>Projects</h1>
-            <div style={{ display: "flex", gap: 8, marginBottom: 20, maxWidth: 500 }}>
-              <input
-                value={newProject}
-                onChange={(e) => setNewProject(e.target.value)}
-                placeholder="New project name"
-                style={{ flex: 1, padding: 10, border: "1px solid #d1d5db", borderRadius: 4 }}
-              />
-              <button
-                onClick={addProject}
-                style={{ padding: "10px 20px", background: "#1a6b3c", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}
-              >
-                Add
+          <div style={{ maxWidth: 850 }}>
+            <div style={{ background: "white", padding: 20, borderRadius: 8, marginBottom: 20, border: "1px solid #e5e7eb" }}>
+              <h3 style={{ marginTop: 0 }}>{projectForm.id ? "Edit Project" : "Add Project"}</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                <input placeholder="Project name (e.g. One Destination)" value={projectForm.name}
+                  onChange={(e) => setProjectForm({ ...projectForm, name: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                <input placeholder="Location" value={projectForm.location}
+                  onChange={(e) => setProjectForm({ ...projectForm, location: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                <select value={projectForm.status}
+                  onChange={(e) => setProjectForm({ ...projectForm, status: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }}>
+                  <option value="available">Available</option>
+                  <option value="upcoming">Upcoming</option>
+                  <option value="sold_out">Sold Out</option>
+                </select>
+                <input placeholder="Brochure URL (optional)" value={projectForm.brochure_url}
+                  onChange={(e) => setProjectForm({ ...projectForm, brochure_url: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+              </div>
+              <textarea placeholder="Description" value={projectForm.description}
+                onChange={(e) => setProjectForm({ ...projectForm, description: e.target.value })}
+                rows={2}
+                style={{ width: "100%", padding: 8, border: "1px solid #ccc", borderRadius: 4, marginBottom: 10, fontFamily: "inherit" }} />
+              <button onClick={saveProject}
+                style={{ padding: "8px 20px", background: "#1a6b3c", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>
+                {projectForm.id ? "Update Project" : "Add Project"}
               </button>
-            </div>
-            <div style={{ background: "white", borderRadius: 8, padding: 16, maxWidth: 600 }}>
-              {projects.length === 0 ? (
-                <p style={{ color: "#6b7280" }}>No projects yet.</p>
-              ) : (
-                projects.map((p) => (
-                  <div key={p.id} style={{ padding: 12, borderBottom: "1px solid #e5e7eb" }}>
-                    {p.name}
-                  </div>
-                ))
+              {projectForm.id && (
+                <button onClick={() => setProjectForm({ id: null, name: "", location: "", description: "", status: "available", brochure_url: "" })}
+                  style={{ marginLeft: 8, padding: "8px 20px", background: "#6b7280", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>
+                  Cancel
+                </button>
               )}
             </div>
+
+            {projects.length === 0 ? (
+              <p style={{ color: "#6b7280" }}>No projects yet.</p>
+            ) : (
+              projects.map((p) => (
+                <div key={p.id} style={{ background: "white", padding: 16, borderRadius: 8, marginBottom: 14, border: "1px solid #e5e7eb" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+                    <div>
+                      <strong style={{ fontSize: 16 }}>🏢 {p.name}</strong>
+                      <span style={{ marginLeft: 8, fontSize: 12, padding: "2px 8px", borderRadius: 10, background: p.status === "available" ? "#dcfce7" : p.status === "sold_out" ? "#fee2e2" : "#fef9c3" }}>
+                        {p.status}
+                      </span>
+                      {p.location && <div style={{ fontSize: 13, color: "#6b7280" }}>{p.location}</div>}
+                      {p.description && <div style={{ fontSize: 13, marginTop: 4 }}>{p.description}</div>}
+                    </div>
+                    <div>
+                      <button onClick={() => editProject(p)} style={{ marginRight: 6, padding: "4px 10px", fontSize: 12, background: "#2563eb", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>Edit</button>
+                      <button onClick={() => deleteProject(p.id)} style={{ padding: "4px 10px", fontSize: 12, background: "#dc2626", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>Delete</button>
+                    </div>
+                  </div>
+
+                  {/* Units */}
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #f3f4f6" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Units</div>
+                    {(p.units || []).length === 0 ? (
+                      <div style={{ fontSize: 12, color: "#9ca3af" }}>No units added yet.</div>
+                    ) : (
+                      (p.units || []).map((u) => (
+                        <div key={u.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0" }}>
+                          <span>
+                            {u.unit_type}{u.size ? ` (${u.size})` : ""}
+                            {u.price_min ? ` — Rs ${u.price_min / 100000}L${u.price_max && u.price_max !== u.price_min ? `-${u.price_max / 100000}L` : ""}` : ""}
+                            <span style={{ color: "#6b7280" }}> [{u.availability}]</span>
+                          </span>
+                          <button onClick={() => deleteUnit(u.id)} style={{ fontSize: 11, background: "none", border: "none", color: "#dc2626", cursor: "pointer" }}>✕</button>
+                        </div>
+                      ))
+                    )}
+
+                    {activeProjectId === p.id ? (
+                      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                        <input placeholder="Unit type" value={unitForm.unit_type}
+                          onChange={(e) => setUnitForm({ ...unitForm, unit_type: e.target.value })}
+                          style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 130 }} />
+                        <input placeholder="Size" value={unitForm.size}
+                          onChange={(e) => setUnitForm({ ...unitForm, size: e.target.value })}
+                          style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 90 }} />
+                        <input placeholder="Min (L)" value={unitForm.price_min}
+                          onChange={(e) => setUnitForm({ ...unitForm, price_min: e.target.value })}
+                          style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 70 }} />
+                        <input placeholder="Max (L)" value={unitForm.price_max}
+                          onChange={(e) => setUnitForm({ ...unitForm, price_max: e.target.value })}
+                          style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 70 }} />
+                        <button onClick={() => addUnit(p.id)} style={{ padding: "6px 12px", fontSize: 12, background: "#1a6b3c", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>Add</button>
+                        <button onClick={() => setActiveProjectId(null)} style={{ padding: "6px 12px", fontSize: 12, background: "#6b7280", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => { setActiveProjectId(p.id); setUnitForm({ unit_type: "", size: "", price_min: "", price_max: "", availability: "available" }); }}
+                        style={{ marginTop: 8, padding: "4px 12px", fontSize: 12, background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 4, cursor: "pointer" }}>
+                        + Add Unit
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         )}
 

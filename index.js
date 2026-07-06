@@ -64,6 +64,12 @@ async function getLiveContext() {
     const rates = ratesRes.data || [];
     const company = companyRes.data || null;
 
+    // Fetch units for each project (projects ≠ plots — different things entirely)
+    for (const p of projects) {
+      const { data: units } = await db.supabase.from("project_units").select("*").eq("project_id", p.id);
+      p._units = units || [];
+    }
+
     // Feature premium % (so the bot can quote feature-adjusted prices)
     let premiums = {};
     let featureDefs = [];
@@ -88,15 +94,23 @@ async function getLiveContext() {
 
     // Projects
     if (projects.length > 0) {
-      context += `\n--- ACTIVE PROJECTS ---\n`;
+      context += `\n--- PROJECTS (built developments — apartments/shops for booking. These are NOT plots.) ---\n`;
       projects.forEach(p => {
-        context += `\n📍 ${p.name}\n`;
-        context += `Location: ${p.location}\n`;
-        context += `Description: ${p.description}\n`;
-        context += `Type: ${p.type}\n`;
-        context += `Price Range: ${p.price_min}L - ${p.price_max}L\n`;
-        context += `Features: ${p.features}\n`;
-        context += `Inventory: ${p.inventory_status}\n`;
+        context += `\n🏢 ${p.name}\n`;
+        if (p.location) context += `Location: ${p.location}\n`;
+        if (p.description) context += `Description: ${p.description}\n`;
+        if (p.status) context += `Status: ${p.status}\n`;
+        if (p._units && p._units.length) {
+          context += `Available units:\n`;
+          p._units.forEach(u => {
+            let line = `  • ${u.unit_type}`;
+            if (u.size) line += ` (${u.size})`;
+            if (u.price_min) line += `: Rs ${u.price_min/100000}L`;
+            if (u.price_max && u.price_max !== u.price_min) line += ` - ${u.price_max/100000}L`;
+            if (u.availability) line += ` [${u.availability}]`;
+            context += line + `\n`;
+          });
+        }
       });
     }
 
@@ -179,6 +193,15 @@ YOUR CORE ROLE:
 - ALWAYS phrase any price as approximate: use "approx", "andazan", "estimate". Never give a fixed/final price.
 - When you are given a RESOLVED PLOT block below, its features are already known — use them, do NOT ask the client whether the plot is corner/park-facing/etc.
 - For exact/final price, offer to connect them with an agent.
+
+🚫 PLOTS vs PROJECTS — NEVER MIX THESE (very important):
+- PLOTS are empty land in DHA sectors (identified by sector + plot number), priced via sector rates + features. 
+- PROJECTS are built developments (like One Destination) with apartments/shops/offices for booking, priced per unit type.
+- These are COMPLETELY different products. NEVER apply plot logic to a project or project logic to a plot.
+- Do NOT quote a project using plot pricing (sectors, plot numbers, corner/park premiums). Projects are priced by their unit types only.
+- Do NOT quote a plot using project logic. 
+- If a client asks about a project, use ONLY the PROJECTS data. If about a plot, use ONLY plot data. Never blend the two in one answer.
+- If unclear whether they mean a plot or a project, ask them to clarify which one.
 
 🗣️ TALKING STYLE:
 - Warm, natural, concise — like a helpful human salesperson, not a form.
@@ -936,23 +959,67 @@ app.get("/api/inventory/stats", auth.requireAuth(["admin", "manager"]), async (r
 // ─── PROJECTS (NEW) ───────────────────────────────────────────────────
 app.get("/api/projects", auth.requireAuth(), async (req, res) => {
   try {
-    const { data } = await db.supabase.from("projects").select("*").order("created_at", { ascending: false });
-    res.json(data || []);
+    const { data: projects } = await db.supabase.from("projects").select("*").order("created_at", { ascending: false });
+    // Attach units to each project
+    const withUnits = await Promise.all((projects || []).map(async (p) => {
+      const { data: units } = await db.supabase.from("project_units").select("*").eq("project_id", p.id);
+      return { ...p, units: units || [] };
+    }));
+    res.json(withUnits);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post("/api/projects", auth.requireAuth(["admin"]), async (req, res) => {
+app.post("/api/projects", auth.requireAuth(["admin", "manager"]), async (req, res) => {
   try {
-    const { name, location, description, type, price_min, price_max, features, inventory_status } = req.body;
-    const { data, error } = await db.supabase
-      .from("projects")
-      .insert({ name, location, description, type, price_min, price_max, features, inventory_status })
-      .select()
-      .single();
+    const { id, name, location, description, status, brochure_url } = req.body;
+    const payload = { name, location: location || null, description: description || null, status: status || "available", brochure_url: brochure_url || null, updated_at: new Date().toISOString() };
+    let result;
+    if (id) {
+      result = await db.supabase.from("projects").update(payload).eq("id", id).select().single();
+    } else {
+      result = await db.supabase.from("projects").insert(payload).select().single();
+    }
+    if (result.error) throw new Error(result.error.message);
+    res.json(result.data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/projects/:id", auth.requireAuth(["admin"]), async (req, res) => {
+  try {
+    const { error } = await db.supabase.from("projects").delete().eq("id", req.params.id);
+    if (error) throw new Error(error.message);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Project units
+app.post("/api/projects/:projectId/units", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { unit_type, size, price_min, price_max, availability, notes } = req.body;
+    const { data, error } = await db.supabase.from("project_units").insert({
+      project_id: req.params.projectId,
+      unit_type, size: size || null,
+      price_min: price_min || null, price_max: price_max || null,
+      availability: availability || "available", notes: notes || null,
+    }).select().single();
     if (error) throw new Error(error.message);
     res.json(data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/projects/units/:unitId", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { error } = await db.supabase.from("project_units").delete().eq("id", req.params.unitId);
+    if (error) throw new Error(error.message);
+    res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
