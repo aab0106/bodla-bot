@@ -457,11 +457,12 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
             plotFacts += `- ALWAYS say "approx" / "andazan" / "estimate" — never a fixed final price.\n`;
             plotFacts += `- NEVER reveal internal plot-number ranges/bands (e.g. do NOT say "plots 6700-6850"). Talk only about THIS plot number.\n`;
             plotFacts += `- Do NOT ask the client about features — you already know them.\n`;
-            plotFacts += `- Offer that an agent can confirm the exact, final price.\n`;
+            plotFacts += `- You are the salesperson. Do NOT end by deferring to "an agent". Instead, keep selling: ask a smart follow-up (their budget, purpose, are they buying/selling/investing) to move the conversation forward.\n`;
+            plotFacts += `- Only bring in a sales expert (with the escalation tag) if the client shows real buying intent, wants to visit/negotiate, or is about to leave.\n`;
           } else {
-            plotFacts += `No price is set for this plot yet — do NOT invent one. Warmly offer to connect them with an agent for the price.\n`;
+            plotFacts += `No price is set for this plot yet — do NOT invent one. Stay engaged: ask about their needs, and if they want the price, tell them your sales expert will get them the exact figure right away (then use the escalation tag).\n`;
           }
-          if (quote.hasExtraLand) plotFacts += `This plot has EXTRA LAND beside it (sold separately) — mention the price will differ and an agent will guide them.\n`;
+          if (quote.hasExtraLand) plotFacts += `This plot has EXTRA LAND beside it (sold separately) — mention the price will differ and offer to have your expert guide them on it.\n`;
           console.log("📍 Resolved plot:", quote.sector, quote.plotNo, "feats:", featLabels.join("+") || "none", quote.estMin ? `~${quote.estMin}-${quote.estMax}L` : "(no band)");
         }
       } catch (e) {
@@ -997,4 +998,4 @@ if (fs.existsSync(DIST_DIR)) {
 
 // ─── START SERVER ─────────────────────────────────────────────────────
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Bodla Bot running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Bodla Bot running on port ${PORT} — build: salesperson-persona-v2`));
