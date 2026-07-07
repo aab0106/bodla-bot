@@ -251,6 +251,7 @@ export default function AdminApp() {
       await axios.post(`${API}/api/projects/${projectId}/units`, {
         unit_type: unitForm.unit_type,
         size: unitForm.size || null,
+        floor: unitForm.floor || null,
         availability: unitForm.availability || "available",
         sqft: unitForm.sqft ? parseFloat(unitForm.sqft) : null,
         rate_per_sqft: unitForm.rate_per_sqft ? Math.round(parseFloat(unitForm.rate_per_sqft)) : null,
@@ -275,6 +276,21 @@ export default function AdminApp() {
       loadProjects();
     } catch (e) {
       setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
+
+  const importUnits = async (projectId, file) => {
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: null });
+      if (!rows.length) { setMsg("Sheet is empty"); return; }
+      const { data } = await axios.post(`${API}/api/projects/${projectId}/units/import`, { rows }, { headers: getHeaders() });
+      setMsg(`Imported ${data.inserted} units${data.skipped ? ` (${data.skipped} skipped)` : ""}`);
+      loadProjects();
+    } catch (e) {
+      setMsg("Import error: " + (e.response?.data?.error || e.message));
     }
   };
 
@@ -2450,12 +2466,26 @@ export default function AdminApp() {
                 </div>
               ) : (
                 <div style={{ background: "white", padding: 20, borderRadius: 8, border: "1px solid #e5e7eb" }}>
-                  <h3 style={{ marginTop: 0 }}>Units</h3>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <h3 style={{ margin: 0 }}>Units</h3>
+                    {proj.pricing_type === "per_sqft" && (
+                      <label style={{ fontSize: 12, cursor: "pointer", background: "#2563eb", color: "white", padding: "6px 12px", borderRadius: 4 }}>
+                        📥 Import Excel
+                        <input type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
+                          onChange={(e) => { importUnits(proj.id, e.target.files[0]); e.target.value = ""; }} />
+                      </label>
+                    )}
+                  </div>
+                  {proj.pricing_type === "per_sqft" && (
+                    <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 0 }}>
+                      Excel columns: Unit#, Floor, Sqft, Price/Sqft (and optional Availability).
+                    </p>
+                  )}
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginBottom: 16 }}>
                     <thead>
                       <tr style={{ background: "#f9fafb", textAlign: "left" }}>
                         <th style={{ padding: 8 }}>Unit</th>
-                        {proj.pricing_type === "per_sqft" && <><th style={{ padding: 8 }}>Sqft</th><th style={{ padding: 8 }}>Rate/sqft</th><th style={{ padding: 8 }}>≈ Total</th></>}
+                        {proj.pricing_type === "per_sqft" && <><th style={{ padding: 8 }}>Floor</th><th style={{ padding: 8 }}>Sqft</th><th style={{ padding: 8 }}>Rate/sqft</th><th style={{ padding: 8 }}>≈ Total</th></>}
                         {proj.pricing_type === "installment" && <><th style={{ padding: 8 }}>Size</th><th style={{ padding: 8 }}>Total</th><th style={{ padding: 8 }}>Down</th><th style={{ padding: 8 }}>Monthly</th><th style={{ padding: 8 }}>Months</th></>}
                         <th style={{ padding: 8 }}>Availability</th>
                         <th style={{ padding: 8 }}></th>
@@ -2463,11 +2493,12 @@ export default function AdminApp() {
                     </thead>
                     <tbody>
                       {(proj.units || []).length === 0 ? (
-                        <tr><td colSpan={8} style={{ padding: 12, color: "#9ca3af" }}>No units yet. Add one below.</td></tr>
+                        <tr><td colSpan={9} style={{ padding: 12, color: "#9ca3af" }}>No units yet. Add one below{proj.pricing_type === "per_sqft" ? " or import from Excel" : ""}.</td></tr>
                       ) : (proj.units || []).map((u) => (
                         <tr key={u.id} style={{ borderBottom: "1px solid #eee" }}>
                           <td style={{ padding: 8 }}>{u.unit_type}</td>
                           {proj.pricing_type === "per_sqft" && <>
+                            <td style={{ padding: 8 }}>{u.floor || "—"}</td>
                             <td style={{ padding: 8 }}>{u.sqft || "—"}</td>
                             <td style={{ padding: 8 }}>{u.rate_per_sqft ? `Rs ${u.rate_per_sqft.toLocaleString()}` : "—"}</td>
                             <td style={{ padding: 8 }}>{u.rate_per_sqft && u.sqft ? `Rs ${((u.rate_per_sqft * u.sqft) / 100000).toFixed(1)}L` : "—"}</td>
@@ -2494,6 +2525,9 @@ export default function AdminApp() {
                       onChange={(e) => setUnitForm({ ...unitForm, unit_type: e.target.value })}
                       style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 140 }} />
                     {proj.pricing_type === "per_sqft" && <>
+                      <input placeholder="Floor" value={unitForm.floor || ""}
+                        onChange={(e) => setUnitForm({ ...unitForm, floor: e.target.value })}
+                        style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 70 }} />
                       <input placeholder="Sqft" value={unitForm.sqft}
                         onChange={(e) => setUnitForm({ ...unitForm, sqft: e.target.value })}
                         style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 90 }} />

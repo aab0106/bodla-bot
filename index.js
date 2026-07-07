@@ -1057,6 +1057,56 @@ app.delete("/api/projects/units/:unitId", auth.requireAuth(["admin", "manager"])
   }
 });
 
+// Bulk import units for a per-sqft project (Unit#, Floor, Sqft, Price/Sqft).
+app.post("/api/projects/:projectId/units/import", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const rows = req.body.rows;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: "No rows provided" });
+    }
+    // Tolerant header lookup
+    const get = (row, names) => {
+      for (const n of names) {
+        for (const k of Object.keys(row)) {
+          if (k.trim().toLowerCase() === n.toLowerCase()) return row[k];
+        }
+      }
+      return undefined;
+    };
+    const records = [];
+    let skipped = 0;
+    for (const row of rows) {
+      const unitNo = get(row, ["Unit", "Unit#", "Unit No", "Unit Number", "Unit No."]);
+      const floor = get(row, ["Floor", "Floor No", "Floor Number"]);
+      const sqft = get(row, ["Sqft", "Sq Ft", "Size", "Area", "Sq.Ft"]);
+      const rate = get(row, ["Price/Sqft", "Price/Sft", "Rate/Sqft", "Rate", "Price per Sqft", "Rate per Sqft"]);
+      const avail = get(row, ["Availability", "Status", "Available"]);
+      if (!unitNo && !sqft) { skipped++; continue; }
+      records.push({
+        project_id: req.params.projectId,
+        unit_type: unitNo ? String(unitNo) : "Unit",
+        floor: floor != null ? String(floor) : null,
+        sqft: sqft != null && sqft !== "" ? parseFloat(String(sqft).replace(/[^\d.]/g, "")) : null,
+        rate_per_sqft: rate != null && rate !== "" ? Math.round(parseFloat(String(rate).replace(/[^\d.]/g, ""))) : null,
+        availability: avail ? String(avail).toLowerCase().replace(/\s+/g, "_") : "available",
+      });
+    }
+    let inserted = 0;
+    const BATCH = 500;
+    const errors = [];
+    for (let i = 0; i < records.length; i += BATCH) {
+      const chunk = records.slice(i, i + BATCH);
+      const { error } = await db.supabase.from("project_units").insert(chunk);
+      if (error) errors.push(error.message);
+      else inserted += chunk.length;
+    }
+    res.json({ total: rows.length, inserted, skipped, errors });
+  } catch (err) {
+    console.error("unit import error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── COMPANY PROFILE (NEW) ────────────────────────────────────────────
 app.get("/api/company-profile", auth.requireAuth(), async (req, res) => {
   try {
