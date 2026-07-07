@@ -56,9 +56,10 @@ export default function AdminApp() {
   // Drop 1: Projects + Company + edit-rate state
   const [projects, setProjects] = useState([]);
   const [newProject, setNewProject] = useState("");
-  const [projectForm, setProjectForm] = useState({ id: null, name: "", location: "", description: "", status: "available", brochure_url: "" });
-  const [unitForm, setUnitForm] = useState({ unit_type: "", size: "", price_min: "", price_max: "", availability: "available" });
+  const [projectForm, setProjectForm] = useState({ id: null, name: "", location: "", description: "", status: "available", brochure_url: "", pricing_type: "consultant_only", floor_map_url: "" });
+  const [unitForm, setUnitForm] = useState({ unit_type: "", size: "", availability: "available", sqft: "", rate_per_sqft: "", total_price: "", down_payment: "", monthly: "", duration_months: "" });
   const [activeProjectId, setActiveProjectId] = useState(null);
+  const [activeProjectType, setActiveProjectType] = useState("consultant_only");
   const [company, setCompany] = useState({
     name: "", about: "", website: "", phone: "", email: "", address: "",
   });
@@ -219,7 +220,7 @@ export default function AdminApp() {
     try {
       await axios.post(`${API}/api/projects`, projectForm, { headers: getHeaders() });
       setMsg(projectForm.id ? "Project updated" : "Project added");
-      setProjectForm({ id: null, name: "", location: "", description: "", status: "available", brochure_url: "" });
+      setProjectForm({ id: null, name: "", location: "", description: "", status: "available", brochure_url: "", pricing_type: "consultant_only", floor_map_url: "" });
       loadProjects();
     } catch (e) {
       setMsg("Error: " + (e.response?.data?.error || e.message));
@@ -227,7 +228,7 @@ export default function AdminApp() {
   };
 
   const editProject = (p) => {
-    setProjectForm({ id: p.id, name: p.name || "", location: p.location || "", description: p.description || "", status: p.status || "available", brochure_url: p.brochure_url || "" });
+    setProjectForm({ id: p.id, name: p.name || "", location: p.location || "", description: p.description || "", status: p.status || "available", brochure_url: p.brochure_url || "", pricing_type: p.pricing_type || "consultant_only", floor_map_url: p.floor_map_url || "" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -243,15 +244,22 @@ export default function AdminApp() {
   };
 
   const addUnit = async (projectId) => {
-    if (!unitForm.unit_type.trim()) { setMsg("Unit type required"); return; }
+    if (!unitForm.unit_type.trim()) { setMsg("Unit type/name required"); return; }
     try {
+      const toRs = (v) => v ? Math.round(parseFloat(v) * 100000) : null; // lakhs → rupees
       await axios.post(`${API}/api/projects/${projectId}/units`, {
-        ...unitForm,
-        price_min: unitForm.price_min ? Math.round(parseFloat(unitForm.price_min) * 100000) : null,
-        price_max: unitForm.price_max ? Math.round(parseFloat(unitForm.price_max) * 100000) : null,
+        unit_type: unitForm.unit_type,
+        size: unitForm.size || null,
+        availability: unitForm.availability || "available",
+        sqft: unitForm.sqft ? parseFloat(unitForm.sqft) : null,
+        rate_per_sqft: unitForm.rate_per_sqft ? Math.round(parseFloat(unitForm.rate_per_sqft)) : null,
+        total_price: toRs(unitForm.total_price),
+        down_payment: toRs(unitForm.down_payment),
+        monthly: unitForm.monthly ? Math.round(parseFloat(unitForm.monthly) * 1000) : null, // in thousands → rupees
+        duration_months: unitForm.duration_months ? parseInt(unitForm.duration_months) : null,
       }, { headers: getHeaders() });
       setMsg("Unit added");
-      setUnitForm({ unit_type: "", size: "", price_min: "", price_max: "", availability: "available" });
+      setUnitForm({ unit_type: "", size: "", availability: "available", sqft: "", rate_per_sqft: "", total_price: "", down_payment: "", monthly: "", duration_months: "" });
       setActiveProjectId(null);
       loadProjects();
     } catch (e) {
@@ -2431,8 +2439,18 @@ export default function AdminApp() {
                   <option value="upcoming">Upcoming</option>
                   <option value="sold_out">Sold Out</option>
                 </select>
+                <select value={projectForm.pricing_type}
+                  onChange={(e) => setProjectForm({ ...projectForm, pricing_type: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }}>
+                  <option value="consultant_only">Consultant only (no prices, e.g. Oasis)</option>
+                  <option value="installment">Installment houses (e.g. Bodla Homes)</option>
+                  <option value="per_sqft">Per sqft high-rise (e.g. One-D)</option>
+                </select>
                 <input placeholder="Brochure URL (optional)" value={projectForm.brochure_url}
                   onChange={(e) => setProjectForm({ ...projectForm, brochure_url: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                <input placeholder="Floor map URL (optional)" value={projectForm.floor_map_url}
+                  onChange={(e) => setProjectForm({ ...projectForm, floor_map_url: e.target.value })}
                   style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
               </div>
               <textarea placeholder="Description" value={projectForm.description}
@@ -2473,15 +2491,23 @@ export default function AdminApp() {
 
                   {/* Units */}
                   <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #f3f4f6" }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Units</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                      Units {p.pricing_type === "consultant_only" && <span style={{ fontWeight: 400, color: "#9ca3af" }}>(consultant-only — no prices needed)</span>}
+                    </div>
                     {(p.units || []).length === 0 ? (
                       <div style={{ fontSize: 12, color: "#9ca3af" }}>No units added yet.</div>
                     ) : (
                       (p.units || []).map((u) => (
                         <div key={u.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0" }}>
                           <span>
-                            {u.unit_type}{u.size ? ` (${u.size})` : ""}
-                            {u.price_min ? ` — Rs ${u.price_min / 100000}L${u.price_max && u.price_max !== u.price_min ? `-${u.price_max / 100000}L` : ""}` : ""}
+                            <strong>{u.unit_type}</strong>{u.size ? ` (${u.size})` : ""}
+                            {/* per_sqft */}
+                            {u.rate_per_sqft ? ` — ${u.sqft ? u.sqft + " sqft @ " : ""}Rs ${u.rate_per_sqft.toLocaleString()}/sqft${u.sqft ? ` ≈ Rs ${((u.rate_per_sqft * u.sqft) / 100000).toFixed(1)}L` : ""}` : ""}
+                            {/* installment */}
+                            {u.total_price ? ` — Total ~Rs ${(u.total_price / 100000).toFixed(1)}L` : ""}
+                            {u.down_payment ? `, Down ~Rs ${(u.down_payment / 100000).toFixed(1)}L` : ""}
+                            {u.monthly ? `, Monthly ~Rs ${(u.monthly / 1000).toFixed(0)}k` : ""}
+                            {u.duration_months ? ` × ${u.duration_months}mo` : ""}
                             <span style={{ color: "#6b7280" }}> [{u.availability}]</span>
                           </span>
                           <button onClick={() => deleteUnit(u.id)} style={{ fontSize: 11, background: "none", border: "none", color: "#dc2626", cursor: "pointer" }}>✕</button>
@@ -2489,29 +2515,59 @@ export default function AdminApp() {
                       ))
                     )}
 
-                    {activeProjectId === p.id ? (
+                    {p.pricing_type !== "consultant_only" && (activeProjectId === p.id ? (
                       <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                        <input placeholder="Unit type" value={unitForm.unit_type}
+                        <input placeholder="Unit name/type" value={unitForm.unit_type}
                           onChange={(e) => setUnitForm({ ...unitForm, unit_type: e.target.value })}
                           style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 130 }} />
-                        <input placeholder="Size" value={unitForm.size}
-                          onChange={(e) => setUnitForm({ ...unitForm, size: e.target.value })}
-                          style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 90 }} />
-                        <input placeholder="Min (L)" value={unitForm.price_min}
-                          onChange={(e) => setUnitForm({ ...unitForm, price_min: e.target.value })}
-                          style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 70 }} />
-                        <input placeholder="Max (L)" value={unitForm.price_max}
-                          onChange={(e) => setUnitForm({ ...unitForm, price_max: e.target.value })}
-                          style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 70 }} />
+
+                        {p.pricing_type === "per_sqft" && (
+                          <>
+                            <input placeholder="Sqft" value={unitForm.sqft}
+                              onChange={(e) => setUnitForm({ ...unitForm, sqft: e.target.value })}
+                              style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 80 }} />
+                            <input placeholder="Rate/sqft (Rs)" value={unitForm.rate_per_sqft}
+                              onChange={(e) => setUnitForm({ ...unitForm, rate_per_sqft: e.target.value })}
+                              style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 110 }} />
+                          </>
+                        )}
+
+                        {p.pricing_type === "installment" && (
+                          <>
+                            <input placeholder="Size (e.g. 8 Marla)" value={unitForm.size}
+                              onChange={(e) => setUnitForm({ ...unitForm, size: e.target.value })}
+                              style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 110 }} />
+                            <input placeholder="Total (L)" value={unitForm.total_price}
+                              onChange={(e) => setUnitForm({ ...unitForm, total_price: e.target.value })}
+                              style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 80 }} />
+                            <input placeholder="Down (L)" value={unitForm.down_payment}
+                              onChange={(e) => setUnitForm({ ...unitForm, down_payment: e.target.value })}
+                              style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 80 }} />
+                            <input placeholder="Monthly (k)" value={unitForm.monthly}
+                              onChange={(e) => setUnitForm({ ...unitForm, monthly: e.target.value })}
+                              style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 90 }} />
+                            <input placeholder="Months" value={unitForm.duration_months}
+                              onChange={(e) => setUnitForm({ ...unitForm, duration_months: e.target.value })}
+                              style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4, width: 70 }} />
+                          </>
+                        )}
+
+                        <select value={unitForm.availability}
+                          onChange={(e) => setUnitForm({ ...unitForm, availability: e.target.value })}
+                          style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4 }}>
+                          <option value="available">Available</option>
+                          <option value="limited">Limited</option>
+                          <option value="sold_out">Sold out</option>
+                        </select>
                         <button onClick={() => addUnit(p.id)} style={{ padding: "6px 12px", fontSize: 12, background: "#1a6b3c", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>Add</button>
                         <button onClick={() => setActiveProjectId(null)} style={{ padding: "6px 12px", fontSize: 12, background: "#6b7280", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>Cancel</button>
                       </div>
                     ) : (
-                      <button onClick={() => { setActiveProjectId(p.id); setUnitForm({ unit_type: "", size: "", price_min: "", price_max: "", availability: "available" }); }}
+                      <button onClick={() => { setActiveProjectId(p.id); setUnitForm({ unit_type: "", size: "", availability: "available", sqft: "", rate_per_sqft: "", total_price: "", down_payment: "", monthly: "", duration_months: "" }); }}
                         style={{ marginTop: 8, padding: "4px 12px", fontSize: 12, background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 4, cursor: "pointer" }}>
                         + Add Unit
                       </button>
-                    )}
+                    ))}
                   </div>
                 </div>
               ))

@@ -94,22 +94,48 @@ async function getLiveContext() {
 
     // Projects
     if (projects.length > 0) {
-      context += `\n--- PROJECTS (built developments — apartments/shops for booking. These are NOT plots.) ---\n`;
+      context += `\n--- PROJECTS (built developments — apartments/houses/shops for booking. These are NOT plots. Each project prices differently.) ---\n`;
       projects.forEach(p => {
         context += `\n🏢 ${p.name}\n`;
         if (p.location) context += `Location: ${p.location}\n`;
         if (p.description) context += `Description: ${p.description}\n`;
         if (p.status) context += `Status: ${p.status}\n`;
-        if (p._units && p._units.length) {
-          context += `Available units:\n`;
-          p._units.forEach(u => {
-            let line = `  • ${u.unit_type}`;
-            if (u.size) line += ` (${u.size})`;
-            if (u.price_min) line += `: Rs ${u.price_min/100000}L`;
-            if (u.price_max && u.price_max !== u.price_min) line += ` - ${u.price_max/100000}L`;
-            if (u.availability) line += ` [${u.availability}]`;
-            context += line + `\n`;
-          });
+        if (p.brochure_url) context += `Brochure link (share when relevant): ${p.brochure_url}\n`;
+        if (p.floor_map_url) context += `Floor map link (share when relevant): ${p.floor_map_url}\n`;
+
+        const type = p.pricing_type || "consultant_only";
+        const units = p._units || [];
+
+        if (type === "consultant_only") {
+          context += `PRICING: This is a themed project with amenity-based pricing. Do NOT quote numbers. Tell the client our senior sales consultant will share exact prices, and offer to connect them.\n`;
+        } else if (type === "installment") {
+          context += `PRICING TYPE: Installment houses. For each size, quote total, down payment, monthly and duration.\n`;
+          if (units.length) {
+            units.forEach(u => {
+              let l = `  • ${u.unit_type || u.size || "Unit"}`;
+              if (u.total_price) l += `: Total approx Rs ${(u.total_price/100000).toFixed(1)}L`;
+              if (u.down_payment) l += `, Down payment ~Rs ${(u.down_payment/100000).toFixed(1)}L`;
+              if (u.monthly) l += `, Monthly ~Rs ${(u.monthly/1000).toFixed(0)}k`;
+              if (u.duration_months) l += ` for ${u.duration_months} months`;
+              l += ` [${u.availability||"available"}]`;
+              context += l + `\n`;
+            });
+          }
+        } else if (type === "per_sqft") {
+          context += `PRICING TYPE: Per square foot. Total = rate/sqft × size. Floors are the same rate; size drives the price.\n`;
+          if (units.length) {
+            units.forEach(u => {
+              let l = `  • ${u.unit_type || "Unit"}`;
+              if (u.sqft) l += `, ${u.sqft} sqft`;
+              if (u.rate_per_sqft) {
+                l += ` @ Rs ${u.rate_per_sqft.toLocaleString()}/sqft`;
+                if (u.sqft) l += ` → approx Rs ${((u.rate_per_sqft*u.sqft)/100000).toFixed(1)}L total`;
+              }
+              l += ` [${u.availability||"available"}]`;
+              context += l + `\n`;
+            });
+          }
+          context += `When quoting, compute rate × size, present as approx, and confirm availability. Offer agent for booking.\n`;
         }
       });
     }
@@ -973,8 +999,8 @@ app.get("/api/projects", auth.requireAuth(), async (req, res) => {
 
 app.post("/api/projects", auth.requireAuth(["admin", "manager"]), async (req, res) => {
   try {
-    const { id, name, location, description, status, brochure_url } = req.body;
-    const payload = { name, location: location || null, description: description || null, status: status || "available", brochure_url: brochure_url || null, updated_at: new Date().toISOString() };
+    const { id, name, location, description, status, brochure_url, pricing_type, floor_map_url } = req.body;
+    const payload = { name, location: location || null, description: description || null, status: status || "available", brochure_url: brochure_url || null, pricing_type: pricing_type || "consultant_only", floor_map_url: floor_map_url || null, updated_at: new Date().toISOString() };
     let result;
     if (id) {
       result = await db.supabase.from("projects").update(payload).eq("id", id).select().single();
@@ -1001,12 +1027,18 @@ app.delete("/api/projects/:id", auth.requireAuth(["admin"]), async (req, res) =>
 // Project units
 app.post("/api/projects/:projectId/units", auth.requireAuth(["admin", "manager"]), async (req, res) => {
   try {
-    const { unit_type, size, price_min, price_max, availability, notes } = req.body;
+    const { unit_type, size, availability, notes, floor, sqft, rate_per_sqft, total_price, down_payment, monthly, duration_months } = req.body;
     const { data, error } = await db.supabase.from("project_units").insert({
       project_id: req.params.projectId,
       unit_type, size: size || null,
-      price_min: price_min || null, price_max: price_max || null,
       availability: availability || "available", notes: notes || null,
+      floor: floor || null,
+      sqft: sqft || null,
+      rate_per_sqft: rate_per_sqft || null,
+      total_price: total_price || null,
+      down_payment: down_payment || null,
+      monthly: monthly || null,
+      duration_months: duration_months || null,
     }).select().single();
     if (error) throw new Error(error.message);
     res.json(data);
