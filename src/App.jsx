@@ -343,17 +343,20 @@ export default function AdminApp() {
   // Parse Excel client-side, send rows to backend in chunks (handles big files).
   const importInventory = async (file) => {
     if (!file) return;
+    console.log("Import started:", file.name, file.size, "bytes");
     setInvImporting(true);
     setInvResult(null);
+    setMsg("Reading file...");
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
-      if (!rows.length) { setMsg("Sheet is empty"); setInvImporting(false); return; }
+      console.log("Parsed rows:", rows.length);
+      if (!rows.length) { setMsg("Sheet is empty or unreadable"); setInvImporting(false); return; }
 
-      // Send in chunks of 2000 rows to avoid huge single requests.
-      const CHUNK = 2000;
+      setMsg(`Uploading ${rows.length} rows...`);
+      const CHUNK = 500;
       let inserted = 0, skipped = 0, total = rows.length;
       const errors = [];
       for (let i = 0; i < rows.length; i += CHUNK) {
@@ -365,10 +368,11 @@ export default function AdminApp() {
         setInvResult({ inserted, skipped, total, inProgress: i + CHUNK < rows.length });
       }
       setInvResult({ inserted, skipped, total, errors, inProgress: false });
-      setMsg(`Imported ${inserted} plots`);
+      setMsg(`✓ Imported ${inserted} plots`);
       loadInvStats();
     } catch (e) {
-      setMsg("Import error: " + (e.response?.data?.error || e.message));
+      console.error("Import failed:", e);
+      setMsg("Import error: " + (e.response?.data?.error || e.message || "could not read file"));
     }
     setInvImporting(false);
   };
@@ -2842,9 +2846,22 @@ export default function AdminApp() {
                 type="file"
                 accept=".xlsx,.xls,.csv"
                 disabled={invImporting}
-                onChange={(e) => importInventory(e.target.files[0])}
+                onChange={(e) => {
+                  const f = e.target.files[0];
+                  if (f) importInventory(f);
+                }}
                 style={{ marginTop: 8 }}
               />
+              <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>
+                Upload starts automatically when you pick a file. Watch for the status below.
+              </div>
+              {msg && (
+                <div style={{ marginTop: 10, padding: 8, borderRadius: 6, fontSize: 13,
+                  background: msg.includes("✓") ? "#f0fdf4" : msg.includes("error") || msg.includes("Error") ? "#fef2f2" : "#f9fafb",
+                  color: msg.includes("error") || msg.includes("Error") ? "#dc2626" : "#374151" }}>
+                  {msg}
+                </div>
+              )}
               {invImporting && (
                 <div style={{ marginTop: 12, color: "#d97706", fontSize: 13 }}>
                   Importing… {invResult ? `${invResult.inserted} so far` : ""}

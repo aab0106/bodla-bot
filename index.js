@@ -13,8 +13,8 @@ const rateLimit = require("express-rate-limit");
 
 const app = express();
 app.set("trust proxy", 1); // Render runs behind a proxy; needed for correct client IPs
-app.use(express.urlencoded({ extended: false }));
-app.use(express.json());
+app.use(express.urlencoded({ extended: false, limit: "25mb" }));
+app.use(express.json({ limit: "25mb" }));
 
 // Brute-force protection on login: max 8 attempts per 15 min per IP.
 const loginLimiter = rateLimit({
