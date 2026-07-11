@@ -982,6 +982,34 @@ app.get("/api/inventory/stats", auth.requireAuth(["admin", "manager"]), async (r
   }
 });
 
+// Browse loaded plots (paginated, optional sector filter).
+app.get("/api/inventory/list", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const sector = req.query.sector;
+    const page = parseInt(req.query.page || "0", 10);
+    const pageSize = 50;
+    let q = db.supabase.from("plot_inventory").select("*", { count: "exact" });
+    if (sector) q = q.eq("sector", sector.toUpperCase());
+    q = q.order("sector").order("plot_no").range(page * pageSize, page * pageSize + pageSize - 1);
+    const { data, count, error } = await q;
+    if (error) throw new Error(error.message);
+    res.json({ plots: data || [], total: count || 0, page, pageSize });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Distinct sectors loaded (for the filter dropdown).
+app.get("/api/inventory/sectors", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { data } = await db.supabase.from("plot_inventory").select("sector");
+    const sectors = [...new Set((data || []).map((r) => r.sector))].sort();
+    res.json({ sectors });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── PROJECTS (NEW) ───────────────────────────────────────────────────
 app.get("/api/projects", auth.requireAuth(), async (req, res) => {
   try {

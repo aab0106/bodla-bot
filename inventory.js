@@ -79,21 +79,43 @@ async function importRows(rawRows) {
     else skipped++;
   }
 
+  // Deduplicate on the conflict key (sector + plot_no + plot_size).
+  // Later rows win. Track duplicates so we can report them.
+  const seen = new Map();
+  const duplicates = [];
+  for (const rec of records) {
+    const key = `${rec.sector}|${rec.plot_no}|${rec.plot_size || ""}`;
+    if (seen.has(key)) {
+      duplicates.push(`Sector ${rec.sector} Plot ${rec.plot_no}${rec.plot_size ? " (" + rec.plot_size + ")" : ""}`);
+    }
+    seen.set(key, rec); // last occurrence wins
+  }
+  const deduped = Array.from(seen.values());
+
   const BATCH = 500;
   let inserted = 0;
   const errors = [];
-  for (let i = 0; i < records.length; i += BATCH) {
-    const chunk = records.slice(i, i + BATCH);
+  for (let i = 0; i < deduped.length; i += BATCH) {
+    const chunk = deduped.slice(i, i + BATCH);
     const { error } = await supabase
       .from("plot_inventory")
       .upsert(chunk, { onConflict: "sector,plot_no,plot_size" });
     if (error) {
-      errors.push(`Batch ${i / BATCH}: ${error.message}`);
+      errors.push(`Batch ${Math.floor(i / BATCH)}: ${error.message}`);
     } else {
       inserted += chunk.length;
     }
   }
-  return { total: rawRows.length, mapped: records.length, inserted, skipped, errors };
+  return {
+    total: rawRows.length,
+    mapped: records.length,
+    uniqueRows: deduped.length,
+    inserted,
+    skipped,
+    duplicateCount: duplicates.length,
+    duplicates: duplicates.slice(0, 20), // sample for display
+    errors,
+  };
 }
 
 // Resolve a specific plot for the bot: features come from inventory,
@@ -197,4 +219,3 @@ module.exports = {
   extractPlotMention,
   buildPlotQuote,
 };
-

@@ -50,6 +50,11 @@ export default function AdminApp() {
   const [invResult, setInvResult] = useState(null);
   const [resolveQuery, setResolveQuery] = useState({ sector: "", plot_no: "", size: "" });
   const [resolveResult, setResolveResult] = useState(null);
+  const [invPlots, setInvPlots] = useState([]);
+  const [invSectors, setInvSectors] = useState([]);
+  const [invFilter, setInvFilter] = useState("");
+  const [invPage, setInvPage] = useState(0);
+  const [invListTotal, setInvListTotal] = useState(0);
   const [newLeadForm, setNewLeadForm] = useState({ name: "", phone: "" });
   const [excelData, setExcelData] = useState([]);
 
@@ -331,7 +336,27 @@ export default function AdminApp() {
     if (page === "rates") loadFeatures();
     if (page === "settings") { loadFeatures(); loadSettings(); }
     if (page === "inventory") loadInvStats();
+    if (page === "inventory") { loadInvSectors(); loadInvList(0, ""); }
   }, [page, auth?.token]);
+
+  const loadInvSectors = async () => {
+    try {
+      const { data } = await axios.get(`${API}/api/inventory/sectors`, { headers: getHeaders() });
+      setInvSectors(data.sectors || []);
+    } catch (e) { /* non-critical */ }
+  };
+
+  const loadInvList = async (pg, sector) => {
+    try {
+      const { data } = await axios.get(`${API}/api/inventory/list`, {
+        headers: getHeaders(),
+        params: { page: pg, sector: sector || undefined },
+      });
+      setInvPlots(data.plots || []);
+      setInvListTotal(data.total || 0);
+      setInvPage(pg);
+    } catch (e) { /* non-critical */ }
+  };
 
   const loadInvStats = async () => {
     try {
@@ -351,25 +376,46 @@ export default function AdminApp() {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
+      let rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
       console.log("Parsed rows:", rows.length);
       if (!rows.length) { setMsg("Sheet is empty or unreadable"); setInvImporting(false); return; }
 
-      setMsg(`Uploading ${rows.length} rows...`);
+      // Dedupe the WHOLE file on sector+plotno+size before chunking,
+      // so the same plot never lands in two chunks (avoids upsert conflict).
+      const norm = (r) => {
+        const get = (names) => { for (const n of names) for (const k of Object.keys(r)) if (k.trim().toLowerCase() === n.toLowerCase()) return r[k]; return ""; };
+        return `${get(["Sector"])}|${get(["Plot No","Plot No.","PlotNo"])}|${get(["Plot Size","Size"])}`.toLowerCase();
+      };
+      const seen = new Map();
+      let dupCount = 0;
+      for (const r of rows) {
+        const k = norm(r);
+        if (seen.has(k)) dupCount++;
+        seen.set(k, r); // last wins
+      }
+      const originalCount = rows.length;
+      rows = Array.from(seen.values());
+      console.log(`Deduped: ${originalCount} → ${rows.length} (${dupCount} duplicates)`);
+
+      setMsg(`Uploading ${rows.length} unique rows${dupCount ? ` (${dupCount} duplicates removed)` : ""}...`);
       const CHUNK = 500;
       let inserted = 0, skipped = 0, total = rows.length;
       const errors = [];
+      const allDuplicates = [];
       for (let i = 0; i < rows.length; i += CHUNK) {
         const slice = rows.slice(i, i + CHUNK);
         const { data } = await axios.post(`${API}/api/inventory/import`, { rows: slice }, { headers: getHeaders() });
         inserted += data.inserted || 0;
         skipped += data.skipped || 0;
         if (data.errors?.length) errors.push(...data.errors);
+        if (data.duplicates?.length) allDuplicates.push(...data.duplicates);
         setInvResult({ inserted, skipped, total, inProgress: i + CHUNK < rows.length });
       }
-      setInvResult({ inserted, skipped, total, errors, inProgress: false });
-      setMsg(`✓ Imported ${inserted} plots`);
+      setInvResult({ inserted, skipped, total, errors, fileDuplicates: dupCount, originalCount, inProgress: false });
+      setMsg(`✓ Imported ${inserted} plots${dupCount ? ` (${dupCount} duplicate rows in file were merged)` : ""}`);
       loadInvStats();
+      loadInvSectors();
+      loadInvList(0, invFilter);
     } catch (e) {
       console.error("Import failed:", e);
       setMsg("Import error: " + (e.response?.data?.error || e.message || "could not read file"));
@@ -2921,6 +2967,64 @@ export default function AdminApp() {
                     <div style={{ color: "#d97706", marginTop: 6 }}>No price band covers this plot number.</div>
                   )}
                 </div>
+              )}
+            </div>
+
+            {/* Browse loaded plots */}
+            <div style={{ background: "white", padding: 20, borderRadius: 8, marginTop: 20, border: "1px solid #e5e7eb" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <h3 style={{ margin: 0 }}>Loaded Plots ({invListTotal.toLocaleString()})</h3>
+                <select value={invFilter}
+                  onChange={(e) => { setInvFilter(e.target.value); loadInvList(0, e.target.value); }}
+                  style={{ padding: 6, border: "1px solid #ccc", borderRadius: 4 }}>
+                  <option value="">All sectors</option>
+                  {invSectors.map((s) => <option key={s} value={s}>Sector {s}</option>)}
+                </select>
+              </div>
+              {invPlots.length === 0 ? (
+                <div style={{ color: "#9ca3af", fontSize: 13 }}>No plots to show. Upload a sheet above.</div>
+              ) : (
+                <>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ background: "#f9fafb", textAlign: "left" }}>
+                          <th style={{ padding: 6 }}>Sector</th>
+                          <th style={{ padding: 6 }}>Plot</th>
+                          <th style={{ padding: 6 }}>Size</th>
+                          <th style={{ padding: 6 }}>Corner</th>
+                          <th style={{ padding: 6 }}>Park</th>
+                          <th style={{ padding: 6 }}>Road</th>
+                          <th style={{ padding: 6 }}>Nearby Road</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {invPlots.map((p) => (
+                          <tr key={p.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                            <td style={{ padding: 6 }}>{p.sector}</td>
+                            <td style={{ padding: 6 }}>{p.plot_no}</td>
+                            <td style={{ padding: 6 }}>{p.plot_size || "—"}</td>
+                            <td style={{ padding: 6 }}>{p.corner ? "✓" : ""}</td>
+                            <td style={{ padding: 6 }}>{p.park_face ? "✓" : ""}</td>
+                            <td style={{ padding: 6 }}>{p.road_width || "—"}</td>
+                            <td style={{ padding: 6, color: "#6b7280" }}>{p.nearby_road || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, fontSize: 13 }}>
+                    <button disabled={invPage === 0} onClick={() => loadInvList(invPage - 1, invFilter)}
+                      style={{ padding: "4px 12px", borderRadius: 4, border: "1px solid #d1d5db", background: invPage === 0 ? "#f3f4f6" : "white", cursor: invPage === 0 ? "default" : "pointer" }}>
+                      ← Prev
+                    </button>
+                    <span style={{ color: "#6b7280" }}>Page {invPage + 1} of {Math.max(1, Math.ceil(invListTotal / 50))}</span>
+                    <button disabled={(invPage + 1) * 50 >= invListTotal} onClick={() => loadInvList(invPage + 1, invFilter)}
+                      style={{ padding: "4px 12px", borderRadius: 4, border: "1px solid #d1d5db", background: (invPage + 1) * 50 >= invListTotal ? "#f3f4f6" : "white", cursor: (invPage + 1) * 50 >= invListTotal ? "default" : "pointer" }}>
+                      Next →
+                    </button>
+                  </div>
+                </>
               )}
             </div>
           </div>
