@@ -90,6 +90,9 @@ async function getLiveContext() {
       context += `Phone: ${company.phone}\n`;
       context += `Email: ${company.email}\n`;
       context += `Address: ${company.address}\n`;
+      if (company.knowledge) {
+        context += `\n--- POLICIES & FAQ (answer these directly when asked — transfer charges, possession, process, etc.) ---\n${company.knowledge}\n`;
+      }
     }
 
     // Projects
@@ -156,7 +159,8 @@ async function getLiveContext() {
           if (on.length) featTag = ` [features: ${on.join(", ")}]`;
         }
         const subTag = r.sub_category ? ` [${r.sub_category}]` : "";
-        ratesByType[key].push(`Plot ${r.plot_no_from}-${r.plot_no_to}${subTag}: Rs ${r.min_price/100000}L - ${r.max_price/100000}L${featTag}`);
+        const fmt = (v) => { let n = Number(v); while (n > 1e10) n = n/100000; return n >= 1e7 ? `${(n/1e7).toFixed(2)}Cr` : `${Math.round(n/1e5)}L`; };
+        ratesByType[key].push(`Plot ${r.plot_no_from}-${r.plot_no_to}${subTag}: Rs ${fmt(r.min_price)} - ${fmt(r.max_price)}${featTag}`);
       });
 
       Object.entries(ratesByType).forEach(([key, values]) => {
@@ -235,23 +239,33 @@ YOUR CORE ROLE:
 - Don't over-ask. If you already have the info (e.g. resolved plot features), just give the answer.
 - Match the client's language (Urdu/Roman-Urdu/English) naturally.
 
-👔 YOU ARE THE SALESPERSON (very important — this defines your whole behavior):
-- You ARE Bodla Group's sales representative. You are NOT a receptionist who forwards people to "the sales team".
-- NEVER end messages with generic lines like "our sales team can help you" or "hamara sales team aapki madad karega". That sounds like a bot deflecting. YOU are helping them right now.
-- Sound like a real property dealer working the deal: confident, knowledgeable, consultative.
-- Only mention a human handoff at the RIGHT moment (see below) — not in every message.
+👔 YOU ARE THE SALESPERSON (this defines your whole behavior):
+- You ARE Bodla Group's expert sales representative. You are NOT a receptionist who forwards people to "the sales team".
+- ANSWER THE QUESTION DIRECTLY AND SPECIFICALLY FIRST. Never dodge a question you can answer. Clients get frustrated by vague, general replies — they have told us this directly.
+- After answering, ask ONE sharp, relevant follow-up that moves toward a decision (budget, purpose, timeline, cash vs installment, buy vs sell). Exactly ONE — not a list.
+- Do NOT end with "I can connect you with our sales expert" as a default. That is a crutch. Only offer a human when the client shows real buying intent, wants to visit/negotiate/book, explicitly asks for a person, or you genuinely lack the data.
+
+🎯 BE SPECIFIC, NOT GENERAL (clients complained about this directly):
+- Bad (general): "Sector V has modern infrastructure, parks, good investment potential..."
+- Good (specific): "Sector V 5 Marla is around 22–25 lakh. Corner plots add ~10%. Aap ka budget kya hai — main us ke hisaab se best plot batata hoon?"
+- Never give a generic brochure-style list when the client asked something specific. Answer THEIR exact question with real numbers/facts from your data.
+- If a client says "that's too general" or "be specific" — immediately give concrete numbers, a specific plot, or a specific next step. Never repeat the generic answer.
+- Don't re-explain the same sector generically twice. If you already told them, go deeper or ask a qualifying question instead.
+
+💰 WHEN YOU HAVE THE DATA, USE IT:
+- If a RESOLVED PLOT block is given below, quote its price and features directly. Do NOT say "I don't have the pricing" when the data is right there.
+- For transfer charges, possession, transfer process — if that info is in your context below, answer it directly. Only defer if it is genuinely not provided.
+- Never invent facts you don't have. But never dodge facts you DO have.
 
 🎣 DON'T LET THE CLIENT WALK AWAY:
-- If a client seems to lose interest or says things like "I'll look elsewhere / koi aur dekh leta hoon / no worries", do NOT just let them go.
-- Redirect like a salesperson: ask what exactly they need, offer an alternative plot/option, or a reason to stay. Example: "Aap kis budget ya size mein dekh rahe hain? Main aap ke liye behtareen option nikaal deta hoon."
-- Always try to keep the conversation moving toward a visit, a call, or a specific option.
+- If a client loses interest or raises an objection ("police line nearby", "too expensive", "I'll look elsewhere"), engage like a salesperson: acknowledge, then offer a specific alternative or reframe. E.g. "Acha point — main aap ko us side se door, better located 5 Marla dikha deta hoon, thoda budget adjust ho to."
+- Turn objections into the next question. Keep the conversation moving toward a visit, a call, or a specific option.
 
-🤝 HANDOFF — do it like a closer, with urgency (NOT passively):
-- Hand off ONLY when the client shows real buying intent, wants a visit, wants to negotiate/finalize, or is about to leave and needs a human push.
-- When you hand off, sound urgent and personal: "Is baare mein hamara sales expert abhi aap ko call karta hai" / "Hamara expert aap ko guide karega, main abhi aap ki details unhe forward kar raha hoon."
-- A handoff is a concrete next step (a call, a visit), never a vague "team will contact you sometime".
+🤝 HANDOFF — only at the right moment, and like a closer:
+- Hand off ONLY on real buying intent, a visit/booking request, negotiation, explicit ask for a person, or when you truly lack the data.
+- When you do, be specific and urgent: "Hamara sales expert abhi aap ko call karta hai is plot ke liye" — a concrete next step, never a vague "team will contact you."
 
-😐 EMOJIS: Use very sparingly (at most one, and often none). Too many emojis make you look like a bot, not a professional dealer.
+😐 EMOJIS: Use very sparingly (usually none). Too many emojis make you look like a bot, not a professional dealer.
 
 YOUR BEHAVIOR:
 
@@ -406,15 +420,34 @@ function validateTwilio(req, res, next) {
   next();
 }
 
+// In-memory dedup of recently processed message SIDs (Twilio retries on slow responses).
+const _processedMsgs = new Map();
+function alreadyProcessed(sid) {
+  if (!sid) return false;
+  const now = Date.now();
+  // purge entries older than 5 min
+  for (const [k, t] of _processedMsgs) if (now - t > 300000) _processedMsgs.delete(k);
+  if (_processedMsgs.has(sid)) return true;
+  _processedMsgs.set(sid, now);
+  return false;
+}
+
 app.post("/webhook", validateTwilio, async (req, res) => {
 console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
 
   const incomingMsg = req.body.Body?.trim();
   const clientPhone = req.body.From?.replace("whatsapp:", "");
   const profileName = req.body.ProfileName || null;
+  const msgSid = req.body.MessageSid || req.body.SmsMessageSid;
 
   if (!incomingMsg || !clientPhone) {
     return res.status(400).send("Bad request");
+  }
+
+  // Guard against Twilio retrying the same message (causes double replies).
+  if (alreadyProcessed(msgSid)) {
+    console.log("⏭️ Duplicate message ignored:", msgSid);
+    return res.type("text/xml").send(new MessagingResponse().toString());
   }
 
   const twiml = new MessagingResponse();
@@ -499,8 +532,8 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
           }
           if (quote.nearbyRoad) plotFacts += `Location note: ${quote.nearbyRoad}.\n`;
 
-          if (quote.estMin) {
-            plotFacts += `Approximate price for THIS plot (already adjusted for its features${quote.appliedPercent ? `, +${quote.appliedPercent}%` : ""}): approx Rs ${quote.estMin}L to ${quote.estMax}L.\n`;
+          if (quote.estMinText) {
+            plotFacts += `Approximate price for THIS plot (already adjusted for its features${quote.appliedPercent ? `, +${quote.appliedPercent}%` : ""}): approx Rs ${quote.estMinText} to ${quote.estMaxText}.\n`;
             plotFacts += `RULES FOR YOUR REPLY:\n`;
             plotFacts += `- Mention the plot's features naturally, then give the approximate price range above.\n`;
             plotFacts += `- ALWAYS say "approx" / "andazan" / "estimate" — never a fixed final price.\n`;
@@ -512,7 +545,7 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
             plotFacts += `No price is set for this plot yet — do NOT invent one. Stay engaged: ask about their needs, and if they want the price, tell them your sales expert will get them the exact figure right away (then use the escalation tag).\n`;
           }
           if (quote.hasExtraLand) plotFacts += `This plot has EXTRA LAND beside it (sold separately) — mention the price will differ and offer to have your expert guide them on it.\n`;
-          console.log("📍 Resolved plot:", quote.sector, quote.plotNo, "feats:", featLabels.join("+") || "none", quote.estMin ? `~${quote.estMin}-${quote.estMax}L` : "(no band)");
+          console.log("📍 Resolved plot:", quote.sector, quote.plotNo, "feats:", featLabels.join("+") || "none", quote.estMinText ? `~${quote.estMinText}-${quote.estMaxText}` : "(no band)");
         }
       } catch (e) {
         console.error("Plot resolve error:", e.message);
@@ -1147,10 +1180,10 @@ app.get("/api/company-profile", auth.requireAuth(), async (req, res) => {
 
 app.post("/api/company-profile", auth.requireAuth(["admin"]), async (req, res) => {
   try {
-    const { name, about, website, phone, email, address } = req.body;
+    const { name, about, website, phone, email, address, knowledge } = req.body;
     const { data, error } = await db.supabase
       .from("company_profile")
-      .upsert({ name, about, website, phone, email, address }, { onConflict: "id" })
+      .upsert({ name, about, website, phone, email, address, knowledge }, { onConflict: "id" })
       .select()
       .single();
     if (error) throw new Error(error.message);

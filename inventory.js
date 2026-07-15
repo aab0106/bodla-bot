@@ -172,6 +172,19 @@ function extractPlotMention(text) {
   return { sector, plotNo, size, confident: !!sector };
 }
 
+// Format a rupee amount into readable "X.X Lakh" / "X.XX Crore".
+// Defensive: if a value looks like it was already stored in lakhs by mistake
+// (absurdly large), it still renders sanely.
+function formatPKR(rupees) {
+  if (rupees == null || isNaN(rupees)) return null;
+  let n = Number(rupees);
+  // Sanity guard: DHA plot prices are < 100 crore (10,000,000,000 rupees).
+  // If someone stored the value already in lakhs, n would be ~1e11+; scale it.
+  while (n > 1e10) n = n / 100000;
+  if (n >= 10000000) return `${(n / 10000000).toFixed(2)} Crore`;
+  return `${Math.round(n / 100000)} Lakh`;
+}
+
 // Build a resolved quote object the bot can use in its reply.
 // Applies feature premiums to the band price. Always meant to be quoted as approx/estimate.
 async function buildPlotQuote(sector, plotNo, size, getFeaturePremiums) {
@@ -193,10 +206,13 @@ async function buildPlotQuote(sector, plotNo, size, getFeaturePremiums) {
       if (pct > 0) { totalPct += pct; applied.push({ key, pct }); }
     }
     const factor = 1 + totalPct / 100;
-    quote.baseMin = band.min_price / 100000;
-    quote.baseMax = band.max_price / 100000;
-    quote.estMin = +(quote.baseMin * factor).toFixed(1);
-    quote.estMax = +(quote.baseMax * factor).toFixed(1);
+    // Work in raw rupees, format at the end (fixes the "1700000L" bug).
+    const minR = Number(band.min_price) * factor;
+    const maxR = Number(band.max_price) * factor;
+    quote.estMinText = formatPKR(minR);
+    quote.estMaxText = formatPKR(maxR);
+    quote.baseMinText = formatPKR(band.min_price);
+    quote.baseMaxText = formatPKR(band.max_price);
     quote.appliedPercent = totalPct;
     quote.appliedFeatures = applied;
     quote.subCategory = band.sub_category || null;

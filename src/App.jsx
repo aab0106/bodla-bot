@@ -67,7 +67,7 @@ export default function AdminApp() {
   const [activeProjectType, setActiveProjectType] = useState("consultant_only");
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [company, setCompany] = useState({
-    name: "", about: "", website: "", phone: "", email: "", address: "",
+    name: "", about: "", website: "", phone: "", email: "", address: "", knowledge: "",
   });
   const [editingRateId, setEditingRateId] = useState(null);
   const [notifs, setNotifs] = useState([]);
@@ -2721,12 +2721,27 @@ export default function AdminApp() {
               ))}
               <div style={{ marginBottom: 14 }}>
                 <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
-                  About / Knowledge (the bot uses this)
+                  About (general company description)
                 </label>
                 <textarea
                   value={company.about}
                   onChange={(e) => setCompany({ ...company, about: e.target.value })}
-                  rows={6}
+                  rows={4}
+                  style={{ width: "100%", padding: 10, border: "1px solid #d1d5db", borderRadius: 4, fontFamily: "inherit" }}
+                />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                  Policies & FAQ — the bot answers these directly
+                </label>
+                <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>
+                  Put transfer charges, possession info, transfer process, payment terms, etc. here. The bot will use this to answer instead of deflecting.
+                </div>
+                <textarea
+                  value={company.knowledge || ""}
+                  onChange={(e) => setCompany({ ...company, knowledge: e.target.value })}
+                  rows={8}
+                  placeholder={"e.g.\nTransfer charges (Sector A, 1 Kanal): buyer pays Rs X transfer fee + Rs Y membership.\nPossession: 2900 series in Sector V — possession available since 2024.\nTransfer process: NDC → documents → DHA office visit → fee → transfer letter (2-3 days)."}
                   style={{ width: "100%", padding: 10, border: "1px solid #d1d5db", borderRadius: 4, fontFamily: "inherit" }}
                 />
               </div>
