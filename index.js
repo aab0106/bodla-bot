@@ -233,6 +233,20 @@ YOUR CORE ROLE:
 - If a client asks about a project, use ONLY the PROJECTS data. If about a plot, use ONLY plot data. Never blend the two in one answer.
 - If unclear whether they mean a plot or a project, ask them to clarify which one.
 
+🗣️ LANGUAGE — MIRROR THE CLIENT EXACTLY:
+- Reply in the SAME language and script the client used. This matters a lot.
+- Client writes Roman-Urdu ("kya haal hai", "plot ka rate btayen") → reply in Roman-Urdu.
+- Client writes real Urdu script ("مجھے پلاٹ کی قیمت بتائیں") → reply in Urdu script (e.g. "میں بالکل ٹھیک ہوں اور آپ کی مدد کے لیے تیار ہوں").
+- Client writes English → reply in English.
+- Client mixes English + Urdu → mirror that same mix naturally.
+- If they switch language mid-conversation, switch with them immediately.
+- Never reply in English to an Urdu-script message, and never reply in Urdu script to an English message.
+
+🧠 CONVERSATION MEMORY:
+- The conversation history is THIS client's own history only. Use it.
+- Remember what they told you: budget, the plot they asked about, what they said they'd think over. Refer back naturally, like a dealer who knows his client.
+- Never re-ask something they already answered. Never re-explain what you already told them.
+
 🗣️ TALKING STYLE:
 - Warm, natural, concise — like a helpful human salesperson, not a form.
 - Avoid repeating the same sentence structure every reply. Vary your wording.
@@ -470,8 +484,26 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
     // naturally even after handoff. The system prompt is told about the
     // handoff state so it won't re-escalate the same intent.
 
-    // 4. Load chat history
+    // 4. Load chat history (capped, strictly this client's own messages)
     const history = await db.getChatHistory(clientPhone);
+
+    // 4a. Returning-client detection: how long since their last message?
+    let continuityNote = "";
+    if (history.length > 0) {
+      const last = history[history.length - 1];
+      const gapMs = Date.now() - new Date(last.created_at).getTime();
+      const gapHours = gapMs / 3600000;
+      if (gapHours >= 6) {
+        const when = gapHours >= 48
+          ? `${Math.round(gapHours / 24)} days ago`
+          : `${Math.round(gapHours)} hours ago`;
+        continuityNote = `\n\n--- RETURNING CLIENT ---\n`;
+        continuityNote += `This client last spoke with you ${when}. They are coming BACK, not starting fresh.\n`;
+        continuityNote += `Greet them warmly like a salesperson who remembers them (e.g. "Kaise hain aap sir!"), and reference what you discussed last time from the conversation history above — the plot/option they were considering, or what they said they'd think about.\n`;
+        continuityNote += `Example shape: "Kaise hain aap. Aap ke paas [X] ka option tha — phir kya socha aap ne? Ya koi aur options dekhein?"\n`;
+        continuityNote += `Do NOT repeat a generic intro as if you've never met them. Pick up where you left off.\n`;
+      }
+    }
 
     // 4b. Try to resolve a specific plot the client mentioned (code first pass).
     let plotFacts = "";
@@ -554,7 +586,7 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
 
     // 5. Build messages for OpenAI (system prompt is handoff-aware + plot facts)
     const messages = [
-      { role: "system", content: (await buildSystemPrompt(client)) + plotFacts },
+      { role: "system", content: (await buildSystemPrompt(client)) + continuityNote + plotFacts },
       ...history.map((m) => ({ 
         role: m.role === "agent" ? "assistant" : m.role, 
         content: m.content
@@ -628,7 +660,7 @@ app.get("/api/clients", auth.requireAuth(["admin", "manager", "agent"]), async (
     const data = await Promise.all(
       clients.map(async (c) => ({
         ...c,
-        messages: await db.getChatHistory(c.phone),
+        messages: await db.getFullChatHistory(c.phone),
       }))
     );
     res.json(data);

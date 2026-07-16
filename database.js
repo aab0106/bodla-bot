@@ -87,7 +87,21 @@ async function saveMessage(phone, role, content, sender = null) {
     .eq("phone", phone);
 }
 
-async function getChatHistory(phone) {
+// Load chat history for ONE client (strictly scoped by phone — never mixes clients).
+// Caps at the most recent N messages to keep prompts fast, focused and cheap.
+async function getChatHistory(phone, limit = 30) {
+  const { data } = await supabase
+    .from("messages")
+    .select("role, content, created_at, sender_name, sender_role")
+    .eq("phone", phone)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  // fetched newest-first for the limit; return oldest-first for the model
+  return (data || []).reverse();
+}
+
+// Full history (no cap) — for the admin panel chat view.
+async function getFullChatHistory(phone) {
   const { data } = await supabase
     .from("messages")
     .select("role, content, created_at, sender_name, sender_role")
@@ -105,4 +119,5 @@ module.exports = {
   getAllClients,
   saveMessage,
   getChatHistory,
+  getFullChatHistory,
 };
