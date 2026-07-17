@@ -55,6 +55,8 @@ export default function AdminApp() {
   const [invFilter, setInvFilter] = useState("");
   const [invPage, setInvPage] = useState(0);
   const [invListTotal, setInvListTotal] = useState(0);
+  const [bodlaList, setBodlaList] = useState([]);
+  const [bodlaForm, setBodlaForm] = useState({ id: null, sector: "", plot_no: "", plot_size: "", plot_type: "Residential", asking_price: "", status: "available", notes: "" });
   const [newLeadForm, setNewLeadForm] = useState({ name: "", phone: "" });
   const [excelData, setExcelData] = useState([]);
 
@@ -88,6 +90,7 @@ export default function AdminApp() {
       company: ["admin"],
       settings: ["admin"],
       inventory: ["admin", "manager"],
+      "bodla-inv": ["admin", "manager", "agent"],
     };
     if (pagePerms[page] && !pagePerms[page].includes(auth.user.role)) {
       setPage("dashboard");
@@ -338,7 +341,66 @@ export default function AdminApp() {
     if (page === "settings") { loadFeatures(); loadSettings(); }
     if (page === "inventory") loadInvStats();
     if (page === "inventory") { loadInvSectors(); loadInvList(0, ""); }
+    if (page === "bodla-inv") loadBodla();
   }, [page, auth?.token]);
+
+  const loadBodla = async () => {
+    try {
+      const { data } = await axios.get(`${API}/api/bodla-inventory`, { headers: getHeaders() });
+      setBodlaList(data || []);
+    } catch (e) { console.error("loadBodla:", e.message); }
+  };
+
+  const saveBodla = async () => {
+    if (!bodlaForm.sector.trim() || !bodlaForm.plot_no) { setMsg("Sector and plot number are required"); return; }
+    try {
+      await axios.post(`${API}/api/bodla-inventory`, {
+        ...bodlaForm,
+        asking_price: bodlaForm.asking_price ? Math.round(parseFloat(bodlaForm.asking_price) * 100000) : null,
+      }, { headers: getHeaders() });
+      setMsg(bodlaForm.id ? "Listing updated" : "Plot added to Bodla Inventory");
+      setBodlaForm({ id: null, sector: "", plot_no: "", plot_size: "", plot_type: "Residential", asking_price: "", status: "available", notes: "" });
+      loadBodla();
+    } catch (e) {
+      setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
+
+  const editBodla = (b) => {
+    setBodlaForm({
+      id: b.id, sector: b.sector || "", plot_no: b.plot_no || "",
+      plot_size: b.plot_size || "", plot_type: b.plot_type || "Residential",
+      asking_price: b.asking_price ? b.asking_price / 100000 : "",
+      status: b.status || "available", notes: b.notes || "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const deleteBodla = async (id) => {
+    if (!window.confirm("Remove this plot from Bodla Inventory?")) return;
+    try {
+      await axios.delete(`${API}/api/bodla-inventory/${id}`, { headers: getHeaders() });
+      setMsg("Removed");
+      loadBodla();
+    } catch (e) {
+      setMsg("Error: " + (e.response?.data?.error || e.message));
+    }
+  };
+
+  const importBodla = async (file) => {
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: null });
+      if (!rows.length) { setMsg("Sheet is empty"); return; }
+      const { data } = await axios.post(`${API}/api/bodla-inventory/import`, { rows }, { headers: getHeaders() });
+      setMsg(`✓ Imported ${data.inserted} listings${data.skipped ? ` (${data.skipped} skipped)` : ""}`);
+      loadBodla();
+    } catch (e) {
+      setMsg("Import error: " + (e.response?.data?.error || e.message));
+    }
+  };
 
   const loadInvSectors = async () => {
     try {
@@ -972,6 +1034,7 @@ export default function AdminApp() {
           { id: "company", label: "Company Info", roles: ["admin"] },
           { id: "settings", label: "Settings", roles: ["admin"] },
           { id: "inventory", label: "Plots Data", roles: ["admin", "manager"] },
+          { id: "bodla-inv", label: "Bodla Inventory", roles: ["admin", "manager", "agent"] },
         ]
           .filter((item) => item.roles.includes(auth?.user?.role))
           .map((item) => (
@@ -1103,7 +1166,9 @@ export default function AdminApp() {
                           ? "Settings"
                           : page === "inventory"
                             ? "Plots Data"
-                            : "Plot Rates"}
+                            : page === "bodla-inv"
+                              ? "Bodla Inventory"
+                              : "Plot Rates"}
         </h1>
 
         {page === "dashboard" && (
@@ -1276,6 +1341,20 @@ export default function AdminApp() {
         ) : (
           chatMessages.map((m, i) => {
             const time = new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+            // WhatsApp-style date separator: show when the day changes.
+            const msgDate = new Date(m.created_at);
+            const prevDate = i > 0 ? new Date(chatMessages[i - 1].created_at) : null;
+            const sameDay = prevDate && msgDate.toDateString() === prevDate.toDateString();
+            let dateLabel = null;
+            if (!sameDay) {
+              const today = new Date();
+              const yest = new Date(); yest.setDate(today.getDate() - 1);
+              if (msgDate.toDateString() === today.toDateString()) dateLabel = 'Today';
+              else if (msgDate.toDateString() === yest.toDateString()) dateLabel = 'Yesterday';
+              else dateLabel = msgDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+            }
+
             // Staff messages (agent/admin/manager reply) carry sender info.
             let sender;
             if (m.role === 'user') {
@@ -1292,7 +1371,15 @@ export default function AdminApp() {
             const senderColor = m.role === 'user' ? '#999' : m.role === 'agent' ? '#1d4ed8' : '#666';
             
             return (
-              <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
+              <React.Fragment key={i}>
+                {dateLabel && (
+                  <div style={{ display: 'flex', justifyContent: 'center', margin: '10px 0 6px' }}>
+                    <span style={{ background: '#e7e7e7', color: '#4b5563', fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 12 }}>
+                      {dateLabel}
+                    </span>
+                  </div>
+                )}
+              <div style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
                 <div style={{ fontSize: 10, color: senderColor, fontWeight: 600, marginBottom: 2 }}>{sender}</div>
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
                   <div style={{ maxWidth: '70%', padding: '10px 14px', borderRadius: 12, fontSize: 13, background: m.role === 'user' ? '#dcf8c6' : m.role === 'agent' ? '#dbeafe' : '#f0f0f0', lineHeight: 1.5 }}>
@@ -1301,6 +1388,7 @@ export default function AdminApp() {
                   <div style={{ fontSize: 11, color: '#999', whiteSpace: 'nowrap' }}>{time}</div>
                 </div>
               </div>
+              </React.Fragment>
             );
           })
         )}
@@ -3041,6 +3129,117 @@ export default function AdminApp() {
                     </button>
                   </div>
                 </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {page === "bodla-inv" && (
+          <div style={{ maxWidth: 950 }}>
+            <div style={{ background: "white", padding: 20, borderRadius: 8, marginBottom: 20, border: "1px solid #e5e7eb" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3 style={{ marginTop: 0, marginBottom: 4 }}>{bodlaForm.id ? "Edit Listing" : "Add Plot For Sale"}</h3>
+                {(auth?.user?.role === "admin" || auth?.user?.role === "manager") && (
+                  <label style={{ fontSize: 12, cursor: "pointer", background: "#2563eb", color: "white", padding: "6px 12px", borderRadius: 4 }}>
+                    Import Excel
+                    <input type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
+                      onChange={(e) => { importBodla(e.target.files[0]); e.target.value = ""; }} />
+                  </label>
+                )}
+              </div>
+              <p style={{ fontSize: 12, color: "#6b7280", marginTop: 0 }}>
+                Plots Bodla Group has for sale. When a client asks about one of these, the bot offers it to them.
+                Excel columns: Sector, Plot No, Plot Size, Plot Type, Asking Price, Status, Notes.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 10 }}>
+                <input placeholder="Sector (e.g. P)" value={bodlaForm.sector}
+                  onChange={(e) => setBodlaForm({ ...bodlaForm, sector: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                <input placeholder="Plot No" value={bodlaForm.plot_no}
+                  onChange={(e) => setBodlaForm({ ...bodlaForm, plot_no: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                <input placeholder="Size (e.g. 5 Marla)" value={bodlaForm.plot_size}
+                  onChange={(e) => setBodlaForm({ ...bodlaForm, plot_size: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                <select value={bodlaForm.plot_type}
+                  onChange={(e) => setBodlaForm({ ...bodlaForm, plot_type: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }}>
+                  <option>Residential</option>
+                  <option>Commercial</option>
+                </select>
+                <input placeholder="Asking price (Lakhs)" value={bodlaForm.asking_price}
+                  onChange={(e) => setBodlaForm({ ...bodlaForm, asking_price: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }} />
+                <select value={bodlaForm.status}
+                  onChange={(e) => setBodlaForm({ ...bodlaForm, status: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4 }}>
+                  <option value="available">Available</option>
+                  <option value="under_offer">Under offer</option>
+                  <option value="hold">Hold</option>
+                  <option value="sold">Sold</option>
+                </select>
+                <input placeholder="Internal notes (not shown to client)" value={bodlaForm.notes}
+                  onChange={(e) => setBodlaForm({ ...bodlaForm, notes: e.target.value })}
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4, gridColumn: "span 2" }} />
+              </div>
+              <button onClick={saveBodla}
+                style={{ padding: "8px 20px", background: "#1a6b3c", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>
+                {bodlaForm.id ? "Update Listing" : "Add For Sale"}
+              </button>
+              {bodlaForm.id && (
+                <button onClick={() => setBodlaForm({ id: null, sector: "", plot_no: "", plot_size: "", plot_type: "Residential", asking_price: "", status: "available", notes: "" })}
+                  style={{ marginLeft: 8, padding: "8px 20px", background: "#6b7280", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>
+                  Cancel
+                </button>
+              )}
+              {msg && <span style={{ marginLeft: 12, fontSize: 13, color: msg.includes("Error") || msg.includes("error") ? "#dc2626" : "#1a6b3c" }}>{msg}</span>}
+            </div>
+
+            <div style={{ background: "white", padding: 20, borderRadius: 8, border: "1px solid #e5e7eb" }}>
+              <h3 style={{ marginTop: 0 }}>For Sale ({bodlaList.length})</h3>
+              {bodlaList.length === 0 ? (
+                <div style={{ color: "#9ca3af", fontSize: 13 }}>No plots listed for sale yet.</div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: "#f9fafb", textAlign: "left" }}>
+                      <th style={{ padding: 8 }}>Sector</th>
+                      <th style={{ padding: 8 }}>Plot</th>
+                      <th style={{ padding: 8 }}>Size</th>
+                      <th style={{ padding: 8 }}>Type</th>
+                      <th style={{ padding: 8 }}>Asking</th>
+                      <th style={{ padding: 8 }}>Status</th>
+                      <th style={{ padding: 8 }}>Notes</th>
+                      <th style={{ padding: 8 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bodlaList.map((b) => (
+                      <tr key={b.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                        <td style={{ padding: 8 }}>{b.sector}</td>
+                        <td style={{ padding: 8, fontWeight: 600 }}>{b.plot_no}</td>
+                        <td style={{ padding: 8 }}>{b.plot_size || "—"}</td>
+                        <td style={{ padding: 8 }}>{b.plot_type || "—"}</td>
+                        <td style={{ padding: 8 }}>{b.asking_price ? `Rs ${(b.asking_price / 100000).toFixed(1)}L` : "—"}</td>
+                        <td style={{ padding: 8 }}>
+                          <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10,
+                            background: b.status === "available" ? "#dcfce7" : b.status === "sold" ? "#fee2e2" : "#fef9c3" }}>
+                            {b.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: 8, color: "#6b7280", fontSize: 12 }}>{b.notes || "—"}</td>
+                        <td style={{ padding: 8, whiteSpace: "nowrap" }}>
+                          {(auth?.user?.role === "admin" || auth?.user?.role === "manager") && (
+                            <>
+                              <button onClick={() => editBodla(b)} style={{ marginRight: 4, padding: "3px 10px", fontSize: 11, background: "#2563eb", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>Edit</button>
+                              <button onClick={() => deleteBodla(b.id)} style={{ padding: "3px 10px", fontSize: 11, background: "#dc2626", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}>Delete</button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>

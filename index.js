@@ -617,6 +617,23 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
       } catch (e) {
         console.error("Plot resolve error:", e.message);
       }
+
+      // Is THIS plot in OUR for-sale inventory? Runs independently of pricing,
+      // so we never miss a sales opportunity even if no band exists.
+      try {
+        const listing = await inventory.checkBodlaInventory(mention.sector, mention.plotNo, mention.size);
+        if (listing) {
+          plotFacts += `\n--- SALES OPPORTUNITY: THIS PLOT IS AVAILABLE WITH US ---\n`;
+          plotFacts += `Bodla Group currently has Sector ${listing.sector} Plot ${listing.plot_no}${listing.plot_size ? " (" + listing.plot_size + ")" : ""} listed FOR SALE`;
+          if (listing.asking_price) plotFacts += ` at approx Rs ${inventory.formatPKR(listing.asking_price)}`;
+          plotFacts += listing.status === "under_offer" ? ` — currently under offer, so there is active interest (create honest urgency).` : `.`;
+          plotFacts += `\n`;
+          plotFacts += `Tell the client warmly and directly that this exact plot is available with us right now, and ask if they'd like to take it or view it. Example: "Achi baat ye hai ke ye plot abhi hamare paas available hai — aap lena chahenge?"\n`;
+          plotFacts += `Quote the asking price as approximate. NEVER reveal internal notes.\n`;
+          plotFacts += `If they show ANY buying interest or want to view it, escalate with the escalation tag so a human closes the deal.\n`;
+          console.log("🔥 In Bodla Inventory:", listing.sector, listing.plot_no, listing.status);
+        }
+      } catch (e) { /* non-critical */ }
     }
 
     // 5. Build messages for OpenAI (system prompt is handoff-aware + plot facts)
@@ -1105,6 +1122,108 @@ app.get("/api/inventory/sectors", auth.requireAuth(["admin", "manager"]), async 
     const { data } = await db.supabase.from("plot_inventory").select("sector");
     const sectors = [...new Set((data || []).map((r) => r.sector))].sort();
     res.json({ sectors });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── BODLA INVENTORY (our for-sale plots) ─────────────────────────────
+app.get("/api/bodla-inventory", auth.requireAuth(), async (req, res) => {
+  try {
+    const { data, error } = await db.supabase
+      .from("bodla_inventory")
+      .select("*")
+      .order("listed_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/bodla-inventory", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { id, sector, plot_no, plot_size, plot_type, asking_price, status, notes } = req.body;
+    if (!sector || !plot_no) return res.status(400).json({ error: "Sector and plot number are required" });
+    const payload = {
+      sector: String(sector).toUpperCase().trim(),
+      plot_no: parseInt(plot_no, 10),
+      plot_size: plot_size || null,
+      plot_type: plot_type || null,
+      asking_price: asking_price || null,
+      status: status || "available",
+      notes: notes || null,
+      updated_at: new Date().toISOString(),
+    };
+    let result;
+    if (id) {
+      result = await db.supabase.from("bodla_inventory").update(payload).eq("id", id).select().single();
+    } else {
+      payload.created_by = req.user.id;
+      result = await db.supabase.from("bodla_inventory").insert(payload).select().single();
+    }
+    if (result.error) throw new Error(result.error.message);
+    res.json(result.data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/bodla-inventory/:id", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { error } = await db.supabase.from("bodla_inventory").delete().eq("id", req.params.id);
+    if (error) throw new Error(error.message);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Bulk import our for-sale plots from Excel.
+app.post("/api/bodla-inventory/import", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const rows = req.body.rows;
+    if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: "No rows provided" });
+    const get = (row, names) => {
+      for (const n of names) for (const k of Object.keys(row)) {
+        if (k.trim().toLowerCase() === n.toLowerCase()) return row[k];
+      }
+      return undefined;
+    };
+    const seen = new Map();
+    let skipped = 0;
+    for (const row of rows) {
+      const sector = get(row, ["Sector"]);
+      const plotNo = get(row, ["Plot No", "Plot#", "Plot No.", "PlotNo", "Plot Number"]);
+      if (!sector || plotNo == null || plotNo === "") { skipped++; continue; }
+      const pn = parseInt(String(plotNo).replace(/\D/g, ""), 10);
+      if (Number.isNaN(pn)) { skipped++; continue; }
+      const size = get(row, ["Plot Size", "Size"]) || null;
+      const priceRaw = get(row, ["Asking Price", "Price", "Demand"]);
+      const rec = {
+        sector: String(sector).toUpperCase().trim(),
+        plot_no: pn,
+        plot_size: size,
+        plot_type: get(row, ["Plot Type", "Type"]) || null,
+        asking_price: priceRaw ? Math.round(parseFloat(String(priceRaw).replace(/[^\d.]/g, ""))) : null,
+        status: (get(row, ["Status"]) || "available").toString().toLowerCase().replace(/\s+/g, "_"),
+        notes: get(row, ["Notes", "Remarks"]) || null,
+        created_by: req.user.id,
+      };
+      seen.set(`${rec.sector}|${rec.plot_no}|${rec.plot_size || ""}`, rec);
+    }
+    const records = Array.from(seen.values());
+    let inserted = 0;
+    const errors = [];
+    for (let i = 0; i < records.length; i += 500) {
+      const chunk = records.slice(i, i + 500);
+      const { error } = await db.supabase
+        .from("bodla_inventory")
+        .upsert(chunk, { onConflict: "sector,plot_no,plot_size" });
+      if (error) errors.push(error.message);
+      else inserted += chunk.length;
+    }
+    res.json({ total: rows.length, inserted, skipped, errors });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

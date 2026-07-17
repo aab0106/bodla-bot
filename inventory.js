@@ -225,6 +225,21 @@ async function buildPlotQuote(sector, plotNo, size, getFeaturePremiums) {
   return quote;
 }
 
+// ─── BODLA INVENTORY (our own for-sale plots) ────────────────────────
+// Check whether a specific plot is in OUR for-sale list.
+// Returns the listing if it's live (available/under_offer), else null.
+async function checkBodlaInventory(sector, plotNo, size = null) {
+  let q = supabase
+    .from("bodla_inventory")
+    .select("*")
+    .eq("sector", sector)
+    .eq("plot_no", plotNo)
+    .in("status", ["available", "under_offer"]);
+  if (size) q = q.eq("plot_size", size);
+  const { data } = await q;
+  return (data && data[0]) || null;
+}
+
 module.exports = {
   mapRow,
   importRows,
@@ -234,4 +249,6 @@ module.exports = {
   yesNo,
   extractPlotMention,
   buildPlotQuote,
+  formatPKR,
+  checkBodlaInventory,
 };
