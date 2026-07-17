@@ -279,7 +279,7 @@ YOUR CORE ROLE:
 - Hand off ONLY on real buying intent, a visit/booking request, negotiation, explicit ask for a person, or when you truly lack the data.
 - When you do, be specific and urgent: "Hamara sales expert abhi aap ko call karta hai is plot ke liye" — a concrete next step, never a vague "team will contact you."
 
-😐 EMOJIS: Use very sparingly (usually none). Too many emojis make you look like a bot, not a professional dealer.
+🚫 EMOJIS: Do NOT use emojis. Not one. A professional property dealer does not send emojis in WhatsApp business chats. Emojis make you look like a bot. Zero emojis.
 
 YOUR BEHAVIOR:
 
@@ -308,8 +308,8 @@ DO NOT escalate for:
 - "Tell me more" requests
 
 CONSIDER a handoff (soft) when:
-- Client asks decision-level questions like "should I sell or keep?", "is it a good time to invest?", "which plot is better for me?" — these are high-intent. Answer helpfully and consultatively (without giving definitive financial guarantees), THEN offer a personal call from your sales expert to guide their specific decision.
-- Client is comparing options seriously or hesitating — engage, then offer expert guidance as a concrete next step.
+- Client asks decision-level questions like "should I sell or keep?", "is it a good time to invest?", "which plot is better for me?" — these are high-intent. ANSWER them yourself, confidently and consultatively, like an experienced dealer giving his honest read (without guaranteeing returns). Then ask ONE sharp follow-up to go deeper (their timeline, budget, purpose). Do NOT offer a sales expert here — you ARE the expert. Only escalate if they then ask to speak to someone, want to transact, or you lack the data.
+- Client is comparing options seriously or hesitating — engage and advise. Escalate only on real transaction intent.
 
 🧑‍💼 ACT LIKE A REAL SALESPERSON (very important):
 You are not a form or an FAQ bot. You are a confident, warm sales consultant who wants to WIN the client.
@@ -363,8 +363,43 @@ function shouldEscalate(aiReply) {
   return getEscalation(aiReply) !== null;
 }
 
-function cleanReply(text) {
-  return text.replace(/\[ESCALATE(?::(?:PLOT|PROJECT))?\]/gi, "").trim();
+// Strip every emoji / pictograph. Prompt rules alone don't reliably stop these,
+// so we enforce it in code.
+function stripEmojis(text) {
+  return text
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")   // pictographs, emoticons, symbols
+    .replace(/[\u{2600}-\u{27BF}]/gu, "")     // misc symbols & dingbats
+    .replace(/[\u{FE00}-\u{FE0F}]/gu, "")     // variation selectors
+    .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, "")   // regional indicators (flags)
+    .replace(/\u{200D}/gu, "")                // zero-width joiner
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([.,!?])/g, "$1");
+}
+
+// When NOT escalating, remove trailing "shall I connect you to our sales expert?"
+// style deflections — the bot should keep the conversation itself.
+// Works sentence-wise from the end: drop trailing sentences that are deflections.
+const DEFLECTION_RE = /\b(sales\s*(expert|team|consultant)|hamara\s*expert|hamare\s*expert|connect\s+you\s+with|connect\s+kar(wa)?\s*(sakta|sakte)|baat\s+kar(wa)?\s*(sakta|sakte)|unse\s+baat|arrange\s+that\s+for\s+you|call\s+back)\b/i;
+
+function stripDeflection(text) {
+  // Split into sentences, keeping their terminators.
+  const parts = text.match(/[^.!?]+[.!?]*/g);
+  if (!parts || parts.length < 2) return text.trim();
+
+  // Drop trailing sentences that are deflection offers.
+  let end = parts.length;
+  while (end > 1 && DEFLECTION_RE.test(parts[end - 1])) end--;
+
+  const kept = parts.slice(0, end).join("").trim();
+  // Only accept if a substantive reply remains.
+  return kept.length > 40 ? kept : text.trim();
+}
+
+function cleanReply(text, isEscalating = false) {
+  let out = text.replace(/\[ESCALATE(?::(?:PLOT|PROJECT))?\]/gi, "").trim();
+  out = stripEmojis(out);
+  if (!isEscalating) out = stripDeflection(out);
+  return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // ─── SEND MESSAGE TO SALES AGENT ─────────────────────────────────────
@@ -606,7 +641,7 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
     const rawReply = completion.choices[0].message.content;
     const department = getEscalation(rawReply); // null | 'PLOT' | 'PROJECT'
     const escalate = department !== null;
-    const botReply = cleanReply(rawReply);
+    const botReply = cleanReply(rawReply, !!department);
 
     // 7. Save bot reply
     await db.saveMessage(clientPhone, "assistant", botReply);
@@ -1203,9 +1238,16 @@ app.post("/api/projects/:projectId/units/import", auth.requireAuth(["admin", "ma
 // ─── COMPANY PROFILE (NEW) ────────────────────────────────────────────
 app.get("/api/company-profile", auth.requireAuth(), async (req, res) => {
   try {
-    const { data } = await db.supabase.from("company_profile").select("*").single();
-    res.json(data || {});
+    // Don't use .single() — it errors when the table is empty or has >1 row.
+    const { data, error } = await db.supabase
+      .from("company_profile")
+      .select("*")
+      .order("id", { ascending: true })
+      .limit(1);
+    if (error) throw new Error(error.message);
+    res.json((data && data[0]) || {});
   } catch (err) {
+    console.error("company-profile GET error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1213,14 +1255,34 @@ app.get("/api/company-profile", auth.requireAuth(), async (req, res) => {
 app.post("/api/company-profile", auth.requireAuth(["admin"]), async (req, res) => {
   try {
     const { name, about, website, phone, email, address, knowledge } = req.body;
-    const { data, error } = await db.supabase
+    const payload = { name, about, website, phone, email, address, knowledge };
+
+    // Find the existing profile row (there should only ever be one).
+    const { data: existing } = await db.supabase
       .from("company_profile")
-      .upsert({ name, about, website, phone, email, address, knowledge }, { onConflict: "id" })
-      .select()
-      .single();
-    if (error) throw new Error(error.message);
-    res.json(data);
+      .select("id")
+      .order("id", { ascending: true })
+      .limit(1);
+
+    let result;
+    if (existing && existing.length > 0) {
+      result = await db.supabase
+        .from("company_profile")
+        .update(payload)
+        .eq("id", existing[0].id)
+        .select()
+        .single();
+    } else {
+      result = await db.supabase
+        .from("company_profile")
+        .insert(payload)
+        .select()
+        .single();
+    }
+    if (result.error) throw new Error(result.error.message);
+    res.json(result.data);
   } catch (err) {
+    console.error("company-profile POST error:", err.message);
     res.status(400).json({ error: err.message });
   }
 });

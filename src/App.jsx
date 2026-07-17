@@ -309,6 +309,7 @@ export default function AdminApp() {
           name: data.name || "", about: data.about || "",
           website: data.website || "", phone: data.phone || "",
           email: data.email || "", address: data.address || "",
+          knowledge: data.knowledge || "",
         });
       }
     } catch (e) {
