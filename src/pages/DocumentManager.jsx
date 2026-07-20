@@ -3,8 +3,8 @@ import axios from "axios";
 import { createClient } from "@supabase/supabase-js";
 
 // Supabase client for direct Storage uploads (anon key is browser-safe, guarded by RLS).
-const supaUrl = import.meta.env.VITE_SUPABASE_URL;
-const supaAnon = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supaUrl = import.meta.env.SUPABASE_URL;
+const supaAnon = import.meta.env.SUPABASE_ANON_KEY;
 const supa = supaUrl && supaAnon ? createClient(supaUrl, supaAnon) : null;
 
 // Manages bot-shareable documents. Used on Company page (projectId null) and
@@ -30,7 +30,7 @@ export default function DocumentManager({ API, getHeaders, projectId = null, set
 
   const handleUpload = async (file) => {
     if (!file) return;
-    if (!supa) { setMsg("Storage not configured — add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY"); return; }
+    if (!supa) { setMsg("Storage not configured — add SUPABASE_URL and SUPABASE_ANON_KEY"); return; }
     if (!form.title.trim()) { setMsg("Enter a document title first"); return; }
     setUploading(true);
     setMsg("Uploading...");
