@@ -40,8 +40,11 @@ export default function DocumentManager({ API, getHeaders, projectId = null, set
     try {
       const ext = file.name.split(".").pop();
       const path = `${projectId || "company"}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-      const { error: upErr } = await supa.storage.from("documents").upload(path, file, { upsert: false });
-      if (upErr) throw new Error(upErr.message);
+      const { error: upErr } = await supa.storage.from("documents").upload(path, file, { upsert: false, contentType: file.type || undefined });
+      if (upErr) {
+        console.error("Storage upload error:", upErr);
+        throw new Error("Storage: " + (upErr.message || JSON.stringify(upErr)));
+      }
       const { data: pub } = supa.storage.from("documents").getPublicUrl(path);
       await axios.post(`${API}/api/documents`, {
         title: form.title,
@@ -55,7 +58,9 @@ export default function DocumentManager({ API, getHeaders, projectId = null, set
       setForm({ title: "", category: form.category, keywords: "" });
       load();
     } catch (e) {
-      setMsg("Upload error: " + (e.message || "failed"));
+      const detail = e.response?.data?.error || e.message || "failed";
+      console.error("Upload failed:", e);
+      setMsg("Upload error: " + detail);
     }
     setUploading(false);
   };
