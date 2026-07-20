@@ -95,6 +95,26 @@ async function getLiveContext() {
       }
     }
 
+    // Structured knowledge entries (DHA info, fees, links, FAQ) — bot answers from these.
+    try {
+      const { data: kEntries } = await db.supabase.from("knowledge_entries").select("*").order("category").order("sort_order");
+      if (kEntries && kEntries.length) {
+        const catLabels = { dha: "DHA INFORMATION", fees: "FEES & CHARGES", links: "USEFUL LINKS", faq: "FAQ", general: "GENERAL INFO" };
+        const byCat = {};
+        for (const e of kEntries) (byCat[e.category] = byCat[e.category] || []).push(e);
+        context += `\n--- KNOWLEDGE BASE (answer these directly; do NOT deflect if the answer is here) ---\n`;
+        for (const [cat, entries] of Object.entries(byCat)) {
+          context += `\n[${catLabels[cat] || cat.toUpperCase()}]\n`;
+          for (const e of entries) {
+            context += `• ${e.title}`;
+            if (e.content) context += `: ${e.content}`;
+            if (e.link_url) context += ` (link to share: ${e.link_url})`;
+            context += `\n`;
+          }
+        }
+      }
+    } catch (e) { /* non-critical */ }
+
     // Projects
     if (projects.length > 0) {
       context += `\n--- PROJECTS (built developments — apartments/houses/shops for booking. These are NOT plots. Each project prices differently.) ---\n`;
@@ -1355,6 +1375,47 @@ app.post("/api/projects/:projectId/units/import", auth.requireAuth(["admin", "ma
 });
 
 // ─── COMPANY PROFILE (NEW) ────────────────────────────────────────────
+// ─── KNOWLEDGE ENTRIES (Company Info sub-tabs: DHA, fees, links, FAQ) ──
+app.get("/api/knowledge", auth.requireAuth(), async (req, res) => {
+  try {
+    let q = db.supabase.from("knowledge_entries").select("*").order("sort_order").order("created_at");
+    if (req.query.category) q = q.eq("category", req.query.category);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/knowledge", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { id, category, title, content, link_url, sort_order } = req.body;
+    if (!category || !title) return res.status(400).json({ error: "Category and title are required" });
+    const payload = { category, title, content: content || null, link_url: link_url || null, sort_order: sort_order || 0, updated_at: new Date().toISOString() };
+    let result;
+    if (id) {
+      result = await db.supabase.from("knowledge_entries").update(payload).eq("id", id).select().single();
+    } else {
+      result = await db.supabase.from("knowledge_entries").insert(payload).select().single();
+    }
+    if (result.error) throw new Error(result.error.message);
+    res.json(result.data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/knowledge/:id", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { error } = await db.supabase.from("knowledge_entries").delete().eq("id", req.params.id);
+    if (error) throw new Error(error.message);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get("/api/company-profile", auth.requireAuth(), async (req, res) => {
   try {
     // Don't use .single() — it errors when the table is empty or has >1 row.

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import axios from "axios";
+import CompanyPage from "./pages/CompanyPage";
 
 // In production (panel served by Render alongside the API) we use same-origin
 // relative paths, so API = "". For local `npm run dev`, set VITE_API_URL to the
@@ -2789,59 +2790,15 @@ export default function AdminApp() {
         )}
 
         {page === "company" && (
-          <div style={{ maxWidth: 600 }}>
-            <h1 style={{ fontSize: 24, marginBottom: 20 }}>Company Info</h1>
-            <div style={{ background: "white", borderRadius: 8, padding: 20 }}>
-              {[
-                { key: "name", label: "Company Name" },
-                { key: "website", label: "Website" },
-                { key: "phone", label: "Phone" },
-                { key: "email", label: "Email" },
-                { key: "address", label: "Address" },
-              ].map((f) => (
-                <div key={f.key} style={{ marginBottom: 14 }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{f.label}</label>
-                  <input
-                    value={company[f.key]}
-                    onChange={(e) => setCompany({ ...company, [f.key]: e.target.value })}
-                    style={{ width: "100%", padding: 10, border: "1px solid #d1d5db", borderRadius: 4 }}
-                  />
-                </div>
-              ))}
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
-                  About (general company description)
-                </label>
-                <textarea
-                  value={company.about}
-                  onChange={(e) => setCompany({ ...company, about: e.target.value })}
-                  rows={4}
-                  style={{ width: "100%", padding: 10, border: "1px solid #d1d5db", borderRadius: 4, fontFamily: "inherit" }}
-                />
-              </div>
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
-                  Policies & FAQ — the bot answers these directly
-                </label>
-                <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>
-                  Put transfer charges, possession info, transfer process, payment terms, etc. here. The bot will use this to answer instead of deflecting.
-                </div>
-                <textarea
-                  value={company.knowledge || ""}
-                  onChange={(e) => setCompany({ ...company, knowledge: e.target.value })}
-                  rows={8}
-                  placeholder={"e.g.\nTransfer charges (Sector A, 1 Kanal): buyer pays Rs X transfer fee + Rs Y membership.\nPossession: 2900 series in Sector V — possession available since 2024.\nTransfer process: NDC → documents → DHA office visit → fee → transfer letter (2-3 days)."}
-                  style={{ width: "100%", padding: 10, border: "1px solid #d1d5db", borderRadius: 4, fontFamily: "inherit" }}
-                />
-              </div>
-              <button
-                onClick={saveCompany}
-                style={{ padding: "10px 24px", background: "#1a6b3c", color: "white", border: "none", borderRadius: 4, cursor: "pointer" }}
-              >
-                Save Company Info
-              </button>
-            </div>
-          </div>
+          <CompanyPage
+            API={API}
+            getHeaders={getHeaders}
+            company={company}
+            setCompany={setCompany}
+            saveCompany={saveCompany}
+            setMsg={setMsg}
+            msg={msg}
+          />
         )}
 
         {page === "settings" && (
