@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import DocumentManager from "./DocumentManager";
 
 // Company Info page with sub-tabs. Profile fields live in App (company/setCompany/saveCompany).
 // Knowledge entries (DHA / Fees / Links / FAQ) are managed here via the /api/knowledge endpoints.
@@ -96,6 +97,7 @@ export default function CompanyPage({ API, getHeaders, company, setCompany, save
             Save Company Info
           </button>
           {msg && <span style={{ marginLeft: 12, fontSize: 13, color: "#1a6b3c" }}>{msg}</span>}
+          <DocumentManager API={API} getHeaders={getHeaders} projectId={null} setMsg={setMsg} />
         </div>
       ) : (
         <div>

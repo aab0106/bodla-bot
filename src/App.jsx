@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import axios from "axios";
 import CompanyPage from "./pages/CompanyPage";
+import DocumentManager from "./pages/DocumentManager";
 
 // In production (panel served by Render alongside the API) we use same-origin
 // relative paths, so API = "". For local `npm run dev`, set VITE_API_URL to the
@@ -2704,6 +2705,7 @@ export default function AdminApp() {
                   {msg && <div style={{ marginTop: 8, fontSize: 13, color: msg.includes("added") || msg.includes("✓") ? "#1a6b3c" : "#dc2626" }}>{msg}</div>}
                 </div>
               )}
+              <DocumentManager API={API} getHeaders={getHeaders} projectId={proj.id} setMsg={setMsg} />
             </div>
           );
         })()}

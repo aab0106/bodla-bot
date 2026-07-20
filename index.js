@@ -115,6 +115,18 @@ async function getLiveContext() {
       }
     } catch (e) { /* non-critical */ }
 
+    // Documents the bot can send as WhatsApp attachments.
+    try {
+      const { data: docs } = await db.supabase.from("documents").select("id, title, category, keywords, project_id");
+      if (docs && docs.length) {
+        context += `\n--- SHAREABLE DOCUMENTS (you can send these as WhatsApp attachments) ---\n`;
+        context += `When a client asks for a document listed below (payment plan, brochure, floor map, etc.), share it: write a short line (e.g. "Ye lijiye payment plan:") then on its OWN line write the tag [SEND_DOC:<id>]. Only send a document that genuinely matches their request. Never invent an id.\n`;
+        for (const d of docs) {
+          context += `• "${d.title}" (${d.category})${d.keywords ? ` [keywords: ${d.keywords}]` : ""} → id: ${d.id}\n`;
+        }
+      }
+    } catch (e) { /* non-critical */ }
+
     // Projects
     if (projects.length > 0) {
       context += `\n--- PROJECTS (built developments — apartments/houses/shops for booking. These are NOT plots. Each project prices differently.) ---\n`;
@@ -678,7 +690,22 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
     const rawReply = completion.choices[0].message.content;
     const department = getEscalation(rawReply); // null | 'PLOT' | 'PROJECT'
     const escalate = department !== null;
-    const botReply = cleanReply(rawReply, !!department);
+
+    // Extract any [SEND_DOC:<id>] tags → fetch their file URLs to attach.
+    const docIds = [...rawReply.matchAll(/\[SEND_DOC:\s*([a-f0-9-]+)\s*\]/gi)].map((m) => m[1]);
+    let docUrls = [];
+    if (docIds.length) {
+      try {
+        const { data: docs } = await db.supabase.from("documents").select("file_url, title").in("id", docIds);
+        docUrls = (docs || []).map((d) => d.file_url).filter(Boolean).slice(0, 3); // Twilio caps ~10, keep sane
+        console.log("📎 Sending documents:", (docs || []).map((d) => d.title).join(", "));
+      } catch (e) { console.error("doc fetch error:", e.message); }
+    }
+
+    let botReply = cleanReply(rawReply, !!department);
+    // Strip the SEND_DOC tag from the visible text.
+    botReply = botReply.replace(/\[SEND_DOC:\s*[a-f0-9-]+\s*\]/gi, "").replace(/\n{3,}/g, "\n\n").trim();
+    if (!botReply && docUrls.length) botReply = "Ye lijiye:"; // ensure non-empty caption
 
     // 7. Save bot reply
     await db.saveMessage(clientPhone, "assistant", botReply);
@@ -712,8 +739,11 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
       console.log("ℹ️ Already escalated — AI handled NEW intent, not re-routed:", clientPhone);
     }
 
-    // 9. Reply to client
-    twiml.message(botReply);
+    // 9. Reply to client (with document attachments if any)
+    const outMsg = twiml.message(botReply);
+    for (const url of docUrls) {
+      outMsg.media(url);
+    }
     res.type("text/xml");
     res.send(twiml.toString());
   } catch (err) {
@@ -1409,6 +1439,52 @@ app.post("/api/knowledge", auth.requireAuth(["admin", "manager"]), async (req, r
 app.delete("/api/knowledge/:id", auth.requireAuth(["admin", "manager"]), async (req, res) => {
   try {
     const { error } = await db.supabase.from("knowledge_entries").delete().eq("id", req.params.id);
+    if (error) throw new Error(error.message);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── DOCUMENTS (bot-shareable files, stored in Supabase Storage) ──────
+app.get("/api/documents", auth.requireAuth(), async (req, res) => {
+  try {
+    let q = db.supabase.from("documents").select("*").order("created_at", { ascending: false });
+    if (req.query.project_id) q = q.eq("project_id", req.query.project_id);
+    else if (req.query.company === "true") q = q.is("project_id", null);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Save a document record after the file was uploaded to Storage client-side.
+app.post("/api/documents", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { title, category, file_url, file_type, project_id, keywords } = req.body;
+    if (!title || !file_url) return res.status(400).json({ error: "Title and file are required" });
+    const { data, error } = await db.supabase.from("documents").insert({
+      title, category: category || "general", file_url, file_type: file_type || null,
+      project_id: project_id || null, keywords: keywords || null,
+    }).select().single();
+    if (error) throw new Error(error.message);
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/documents/:id", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    // Also remove the file from Storage (best-effort).
+    const { data: doc } = await db.supabase.from("documents").select("file_url").eq("id", req.params.id).single();
+    if (doc?.file_url) {
+      const path = doc.file_url.split("/documents/")[1];
+      if (path) await db.supabase.storage.from("documents").remove([path]).catch(() => {});
+    }
+    const { error } = await db.supabase.from("documents").delete().eq("id", req.params.id);
     if (error) throw new Error(error.message);
     res.json({ success: true });
   } catch (err) {
