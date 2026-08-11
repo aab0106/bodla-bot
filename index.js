@@ -572,7 +572,39 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
       }
     }
 
-    // 4b. Try to resolve a specific plot the client mentioned (code first pass).
+    // 4b. Campaign lead detection: does the message contain an active campaign's trigger text?
+    let campaignFocus = "";
+    try {
+      const { data: campaigns } = await db.supabase.from("campaigns").select("*").eq("active", true);
+      const msgLower = incomingMsg.toLowerCase();
+      const matched = (campaigns || []).find(c => c.trigger_text && msgLower.includes(c.trigger_text.toLowerCase()));
+      if (matched) {
+        const { data: opts } = await db.supabase.from("campaign_options").select("*").eq("campaign_id", matched.id).order("sort_order");
+        campaignFocus = `\n\n=== CAMPAIGN LEAD — FOCUS ONLY ON THIS PRODUCT ===\n`;
+        campaignFocus += `This client filled out our ad form for "${matched.name}". Talk ONLY about this product. Do NOT bring up other plots or projects unless they explicitly ask.\n`;
+        campaignFocus += `Greet them acknowledging their form interest, and use any details they gave (category, size, payment preference) from their message.\n\n`;
+        campaignFocus += `PRODUCT: ${matched.name}\n`;
+        if (matched.description) campaignFocus += `${matched.description}\n`;
+        if (matched.details) campaignFocus += `\nDetails: ${matched.details}\n`;
+        if (opts && opts.length) {
+          campaignFocus += `\nPricing / Payment options:\n`;
+          for (const o of opts) {
+            let line = `• ${o.label}:`;
+            if (o.total_price) line += ` Total approx Rs ${inventory.formatPKR(o.total_price)}`;
+            if (o.down_payment) line += `, Down payment Rs ${inventory.formatPKR(o.down_payment)}`;
+            if (o.installment) line += `, ${o.installments || ""} installments of Rs ${inventory.formatPKR(o.installment)}`;
+            if (o.on_possession) line += `, On possession Rs ${inventory.formatPKR(o.on_possession)}`;
+            if (o.notes) line += ` (${o.notes})`;
+            campaignFocus += line + `\n`;
+          }
+        }
+        if (matched.brochure_url) campaignFocus += `\nBrochure: ${matched.brochure_url}\n`;
+        campaignFocus += `\nBe warm, specific, and helpful. Quote prices as approximate. Move them toward booking a visit or call with our team.\n`;
+        console.log("🎯 Campaign lead matched:", matched.name);
+      }
+    } catch (e) { /* non-critical */ }
+
+    // 4c. Try to resolve a specific plot the client mentioned (code first pass).
     let plotFacts = "";
     let mention = inventory.extractPlotMention(incomingMsg);
     // AI fallback: if we found a plot number but not the sector, or nothing clear,
@@ -670,7 +702,7 @@ console.log("🔔 WEBHOOK RECEIVED:", req.body.From, req.body.Body);
 
     // 5. Build messages for OpenAI (system prompt is handoff-aware + plot facts)
     const messages = [
-      { role: "system", content: (await buildSystemPrompt(client)) + continuityNote + plotFacts },
+      { role: "system", content: (await buildSystemPrompt(client)) + continuityNote + plotFacts + campaignFocus },
       ...history.map((m) => ({ 
         role: m.role === "agent" ? "assistant" : m.role, 
         content: m.content
@@ -1439,6 +1471,71 @@ app.post("/api/knowledge", auth.requireAuth(["admin", "manager"]), async (req, r
 app.delete("/api/knowledge/:id", auth.requireAuth(["admin", "manager"]), async (req, res) => {
   try {
     const { error } = await db.supabase.from("knowledge_entries").delete().eq("id", req.params.id);
+    if (error) throw new Error(error.message);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── CAMPAIGNS (ad-driven temporary products) ────────────────────────
+app.get("/api/campaigns", auth.requireAuth(), async (req, res) => {
+  try {
+    const { data: campaigns } = await db.supabase.from("campaigns").select("*").order("created_at", { ascending: false });
+    const withOpts = await Promise.all((campaigns || []).map(async (c) => {
+      const { data: options } = await db.supabase.from("campaign_options").select("*").eq("campaign_id", c.id).order("sort_order");
+      return { ...c, options: options || [] };
+    }));
+    res.json(withOpts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/campaigns", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { id, name, active, trigger_text, description, details, brochure_url } = req.body;
+    if (!name) return res.status(400).json({ error: "Campaign name is required" });
+    const payload = { name, active: active !== false, trigger_text: trigger_text || null, description: description || null, details: details || null, brochure_url: brochure_url || null, updated_at: new Date().toISOString() };
+    let result;
+    if (id) result = await db.supabase.from("campaigns").update(payload).eq("id", id).select().single();
+    else result = await db.supabase.from("campaigns").insert(payload).select().single();
+    if (result.error) throw new Error(result.error.message);
+    res.json(result.data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/campaigns/:id", auth.requireAuth(["admin"]), async (req, res) => {
+  try {
+    const { error } = await db.supabase.from("campaigns").delete().eq("id", req.params.id);
+    if (error) throw new Error(error.message);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/campaigns/:id/options", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { label, total_price, down_payment, installment, installments, on_possession, notes } = req.body;
+    const { data, error } = await db.supabase.from("campaign_options").insert({
+      campaign_id: req.params.id, label,
+      total_price: total_price || null, down_payment: down_payment || null,
+      installment: installment || null, installments: installments || null,
+      on_possession: on_possession || null, notes: notes || null,
+    }).select().single();
+    if (error) throw new Error(error.message);
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/campaigns/options/:optId", auth.requireAuth(["admin", "manager"]), async (req, res) => {
+  try {
+    const { error } = await db.supabase.from("campaign_options").delete().eq("id", req.params.optId);
     if (error) throw new Error(error.message);
     res.json({ success: true });
   } catch (err) {

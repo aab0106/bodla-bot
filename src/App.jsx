@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import axios from "axios";
 import CompanyPage from "./pages/CompanyPage";
 import DocumentManager from "./pages/DocumentManager";
+import CampaignsPage from "./pages/CampaignsPage";
 
 // In production (panel served by Render alongside the API) we use same-origin
 // relative paths, so API = "". For local `npm run dev`, set VITE_API_URL to the
@@ -93,6 +94,7 @@ export default function AdminApp() {
       settings: ["admin"],
       inventory: ["admin", "manager"],
       "bodla-inv": ["admin", "manager", "agent"],
+      campaigns: ["admin", "manager"],
     };
     if (pagePerms[page] && !pagePerms[page].includes(auth.user.role)) {
       setPage("dashboard");
@@ -1037,6 +1039,7 @@ export default function AdminApp() {
           { id: "settings", label: "Settings", roles: ["admin"] },
           { id: "inventory", label: "Plots Data", roles: ["admin", "manager"] },
           { id: "bodla-inv", label: "Bodla Inventory", roles: ["admin", "manager", "agent"] },
+          { id: "campaigns", label: "Campaigns", roles: ["admin", "manager"] },
         ]
           .filter((item) => item.roles.includes(auth?.user?.role))
           .map((item) => (
@@ -1170,7 +1173,9 @@ export default function AdminApp() {
                             ? "Plots Data"
                             : page === "bodla-inv"
                               ? "Bodla Inventory"
-                              : "Plot Rates"}
+                              : page === "campaigns"
+                                ? "Campaigns"
+                                : "Plot Rates"}
         </h1>
 
         {page === "dashboard" && (
@@ -3091,6 +3096,10 @@ export default function AdminApp() {
               )}
             </div>
           </div>
+        )}
+
+        {page === "campaigns" && (
+          <CampaignsPage API={API} getHeaders={getHeaders} setMsg={setMsg} msg={msg} role={auth?.user?.role} />
         )}
 
         {page === "bodla-inv" && (
