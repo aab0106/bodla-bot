@@ -115,6 +115,25 @@ export default function AdminApp() {
     }
   }, []);
 
+  // Global handler: if any request comes back 401 (expired/invalid token),
+  // log the user out cleanly so they're sent to the login screen instead of
+  // silently failing and spamming the server with a dead token.
+  useEffect(() => {
+    const interceptor = axios.interceptors.response.use(
+      (res) => res,
+      (err) => {
+        if (err.response?.status === 401 && localStorage.getItem("bodla_auth")) {
+          localStorage.removeItem("bodla_auth");
+          setAuth(null);
+          setPage("dashboard");
+          setMsg("Your session expired — please log in again.");
+        }
+        return Promise.reject(err);
+      }
+    );
+    return () => axios.interceptors.response.eject(interceptor);
+  }, []);
+
   // Load dashboard when auth changes
   useEffect(() => {
     if (auth?.token) {
